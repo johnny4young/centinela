@@ -208,22 +208,33 @@ test('risky changes are flagged for a maintainer or blocked', () => {
   assert.deepEqual(generic, [], 'the Electron rules apply only when enabled');
 });
 
-test('identity flags only unsigned maintainer commits from outside contributors', () => {
+test('identity trusts a maintainer only when that maintainer signed the commit', () => {
+  const me = 'johnny4young';
   const commits = [
-    { sha: 'aaaaaaa1', authorLogin: 'johnny4young', verified: false, message: 'x' },
-    { sha: 'bbbbbbb2', authorLogin: 'johnny4young', verified: true, message: 'x' },
+    { sha: 'aaaaaaa1', authorLogin: me, committerLogin: me, verified: false, message: 'x' },
+    { sha: 'bbbbbbb2', authorLogin: me, committerLogin: me, verified: true, message: 'x' },
     {
       sha: 'ccccccc3',
       authorLogin: 'someone',
-      verified: false,
-      message: 'x\n\nCo-authored-by: johnny4young <x@y>',
+      committerLogin: 'someone',
+      verified: true,
+      message: `x\n\nCo-authored-by: ${me} <x@y>`,
+    },
+    // Signed by the contributor with the maintainer as author.
+    { sha: 'ddddddd4', authorLogin: me, committerLogin: 'someone', verified: true, message: 'x' },
+    {
+      sha: 'eeeeeee5',
+      authorLogin: 'someone',
+      committerLogin: me,
+      verified: true,
+      message: `x\n\nCo-authored-by: ${me} <x@y>`,
     },
   ];
   assert.deepEqual(
     checkIdentity({ author: 'someone', commits, config }).map(f => f.params.sha),
-    ['aaaaaaa', 'ccccccc']
+    ['aaaaaaa', 'ccccccc', 'ddddddd']
   );
-  assert.deepEqual(checkIdentity({ author: 'johnny4young', commits, config }), []);
+  assert.deepEqual(checkIdentity({ author: me, commits, config }), []);
 });
 
 test('dependencies are checked for license and release age', () => {
@@ -365,6 +376,14 @@ test('skip, ownership and outcome rules', () => {
   assert.equal(ownComment([forged, mine]), mine);
   const newer = { user: { type: 'Bot' }, body: '<!-- centinela key=fed -->' };
   assert.equal(ownComment([mine, forged, newer]), newer);
+  const own = {
+    user: { type: 'Bot', login: 'centinela[bot]' },
+    body: '<!-- centinela key=aaa -->',
+  };
+  const other = { user: { type: 'Bot', login: 'quoter[bot]' }, body: '<!-- centinela key=bbb -->' };
+  assert.equal(ownComment([own, other], 'centinela[bot]'), own);
+  assert.equal(ownComment([other], 'centinela[bot]'), null);
+  assert.equal(readMarker('> quoted\n<!-- centinela key=ccc -->'), null);
 
   const blocking = [{ severity: 'blocking' }];
   assert.equal(outcome(blocking, false).state, 'failure');

@@ -227,15 +227,20 @@ export function checkIdentity(ctx) {
   const maintainers = new Set(ctx.config.maintainers.map(login => login.toLowerCase()));
   if (maintainers.has(ctx.author.toLowerCase())) return [];
   const results = [];
-  for (const commit of (ctx.commits ?? []).filter(c => !c.verified)) {
-    const login = commit.authorLogin?.toLowerCase();
+  for (const commit of ctx.commits ?? []) {
+    const author = commit.authorLogin?.toLowerCase();
+    const committer = commit.committerLogin?.toLowerCase();
+    // A valid signature proves only who committed, so a maintainer identity counts only
+    // when that maintainer signed the commit.
+    const signedBy = commit.verified && committer ? committer : null;
     const trailers = [...commit.message.matchAll(/^co-authored-by:(.*)$/gim)].map(m =>
       m[1].toLowerCase()
     );
-    const spoofed =
-      (login && maintainers.has(login)) ||
+    const spoofedAuthor = author && maintainers.has(author) && signedBy !== author;
+    const spoofedTrailer =
+      !maintainers.has(signedBy) &&
       trailers.some(trailer => [...maintainers].some(m => trailer.includes(m)));
-    if (spoofed)
+    if (spoofedAuthor || spoofedTrailer)
       results.push(finding('impersonation', 'maintainer', { sha: commit.sha.slice(0, 7) }));
   }
   return results;

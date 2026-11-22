@@ -83,10 +83,18 @@ export function shouldSkip({ author, association, labels, draft, config }) {
   return null;
 }
 
-export function ownComment(comments) {
-  // The newest one wins, so switching the bot identity never pins an old comment.
+/**
+ * The newest comment Centinela wrote. Its marker carries the approval, so only the identity
+ * Centinela posts as counts; another bot quoting a marker must never forge one.
+ */
+export function ownComment(comments, botLogin = null) {
   return (
-    comments.findLast(comment => comment.user?.type === 'Bot' && readMarker(comment.body)) ?? null
+    comments.findLast(
+      comment =>
+        comment.user?.type === 'Bot' &&
+        (!botLogin || comment.user.login === botLogin) &&
+        readMarker(comment.body)
+    ) ?? null
   );
 }
 
@@ -136,6 +144,7 @@ export async function triagePullRequest({
   eventLabel = null,
   repo,
   version,
+  botLogin = null,
   log,
 }) {
   const pr = await client.pull(number);
@@ -158,7 +167,7 @@ export async function triagePullRequest({
     return log(`#${number} skipped: ${skip}`);
   }
 
-  const existing = ownComment(await client.comments(number));
+  const existing = ownComment(await client.comments(number), botLogin);
   const approvedSha = approvalFor({
     labels,
     config,
@@ -209,6 +218,7 @@ export async function triagePullRequest({
     commits: commits.map(c => ({
       sha: c.sha,
       authorLogin: c.author?.login ?? null,
+      committerLogin: c.committer?.login ?? null,
       verified: c.commit.verification?.verified === true,
       message: c.commit.message,
     })),
@@ -272,7 +282,17 @@ export async function triagePullRequest({
   return { findings, result };
 }
 
-export async function triageIssue({ client, config, number, dryRun, force, repo, version, log }) {
+export async function triageIssue({
+  client,
+  config,
+  number,
+  dryRun,
+  force,
+  repo,
+  version,
+  botLogin = null,
+  log,
+}) {
   const issue = await client.issue(number);
   if (issue.pull_request) return log(`#${number} is a pull request; skipped`);
   if (issue.state !== 'open' && !force) return log(`#${number} is ${issue.state}; nothing to do`);
@@ -293,7 +313,7 @@ export async function triageIssue({ client, config, number, dryRun, force, repo,
     body: issue.body,
     labels: labels.filter(name => name === config.issues.bugLabel),
   });
-  const existing = ownComment(await client.comments(number));
+  const existing = ownComment(await client.comments(number), botLogin);
   if (existing && readMarker(existing.body) === key && !force)
     return log(`#${number} unchanged since the last review`);
 
@@ -345,6 +365,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     client: createClient({ token, repo, statusContext: config.statusContext }),
     config,
     version: rulesVersion(config),
+    // Inside Actions the identity is always known; dry runs accept any bot.
+    botLogin:
+      env.CENTINELA_BOT_LOGIN || (env.GITHUB_ACTIONS === 'true' ? 'github-actions[bot]' : null),
     number: target.number,
     dryRun: target.dryRun,
     action: target.action,

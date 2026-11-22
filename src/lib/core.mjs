@@ -106,13 +106,13 @@ export function markerFor(key, approvedSha = null) {
 
 export function readMarker(text = '') {
   return (
-    text.match(new RegExp(`<!-- ${MARKER} key=([a-f0-9]+)(?: approved=[a-f0-9]+)? -->`))?.[1] ??
+    text.match(new RegExp(`^<!-- ${MARKER} key=([a-f0-9]+)(?: approved=[a-f0-9]+)? -->`))?.[1] ??
     null
   );
 }
 
 export function readApproval(text = '') {
   return (
-    text.match(new RegExp(`<!-- ${MARKER} key=[a-f0-9]+ approved=([a-f0-9]+) -->`))?.[1] ?? null
+    text.match(new RegExp(`^<!-- ${MARKER} key=[a-f0-9]+ approved=([a-f0-9]+) -->`))?.[1] ?? null
   );
 }

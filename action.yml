@@ -71,5 +71,6 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ steps.app.outputs.token || inputs.github-token }}
+        CENTINELA_BOT_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
         CENTINELA_REQUIRE_TYPOS: ${{ inputs.typos == 'true' && '1' || '0' }}
       run: node "$GITHUB_ACTION_PATH/src/centinela.mjs"
