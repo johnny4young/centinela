@@ -1054,16 +1054,13 @@ test('workflow changes are checked for injection, privileged checkouts and timeo
     owner: 'johnny4young',
     workflows: [{ file: '.github/workflows/greet.yml', content }],
   });
-  assert.deepEqual(
-    findings.map(f => `${f.id}:${f.line}`).sort(),
-    [
-      'workflow-injection:17',
-      'workflow-pr-target-checkout:10',
-      'workflow-timeout:5',
-      'workflow-unpinned-action:11',
-      'workflow-write-all:3',
-    ]
-  );
+  assert.deepEqual(findings.map(f => `${f.id}:${f.line}`).sort(), [
+    'workflow-injection:17',
+    'workflow-pr-target-checkout:10',
+    'workflow-timeout:5',
+    'workflow-unpinned-action:11',
+    'workflow-write-all:3',
+  ]);
 });
 
 test('a pull request review uses the detected stack and fetches changed workflows', async () => {
@@ -1114,6 +1111,13 @@ test('workflow checks resist YAML tricks and review a newly privileged workflow 
   assert.ok(
     !untrusted('echo ${{ github.event.pull_request.number }} ${{ github.event.inputs.name }}')
   );
+  assert.ok(untrusted(`echo \${{ github['event']["issue"]['title'] }}`));
+  assert.ok(untrusted('echo ${{ github.event.workflow_run.head_branch }}'));
+  assert.ok(untrusted('echo ${{ github.event.workflow_run.display_title }}'));
+  assert.ok(untrusted('echo ${{ toJSON(github.event.pull_request) }}'));
+  assert.ok(
+    !untrusted('echo ${{ github.event.pull_request.head.sha }} ${{ github.event.sender.login }}')
+  );
   const tricky = [
     'jobs:',
     '  a:',
@@ -1149,6 +1153,8 @@ test('workflow checks resist YAML tricks and review a newly privileged workflow 
     },
     { filename: '.github/workflows/b.yml', status: 'modified', patch: '@@ -1,0 +1,1 @@\n+x' },
   ];
+  const { PR_HEAD_REF } = await import('../src/lib/workflows.mjs');
+  assert.ok(PR_HEAD_REF.test('ref: ${{ github.event.workflow_run.head_sha }}'));
   const findings = checkWorkflows({
     files,
     owner: 'o',

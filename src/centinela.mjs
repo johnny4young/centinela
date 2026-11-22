@@ -205,14 +205,12 @@ export async function triagePullRequest({
     legacy: config.rules,
   });
   const { config: effective, rules } = applyStack(config, stack);
-  const workflows = await Promise.all(
-    files
-      .filter(file => isWorkflow(file.filename) && file.status !== 'removed')
-      .map(async file => ({
-        file: file.filename,
-        content: await fileAt(file.filename, pr.head.sha),
-      }))
-  );
+  // Fetch a bounded number; the rest are reported unread so a maintainer reviews them.
+  const workflows = [];
+  for (const file of files.filter(f => isWorkflow(f.filename) && f.status !== 'removed')) {
+    const content = workflows.length < 30 ? await fileAt(file.filename, pr.head.sha) : null;
+    workflows.push({ file: file.filename, content });
+  }
   const [gaps, dependencies, typos] = await Promise.all([
     localeGaps({ files, fileAt, headSha: pr.head.sha, parity: config.language.localeParity }),
     dependencyChanges({ files, fileAt, baseSha: pr.base.sha, headSha: pr.head.sha }),

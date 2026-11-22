@@ -2,19 +2,35 @@ import { addedLines, matcher } from './core.mjs';
 
 export const isWorkflow = matcher(['.github/workflows/*.yml', '.github/workflows/*.yaml']);
 
-// Text an author controls; numbers, repository fields and dispatch inputs are safe.
-const UNTRUSTED =
-  /\bgithub\.head_ref\b|\btoJSON\(\s*github\.event\s*\)|\bgithub\.event\.(?!repository\.|inputs\.)[\w.[\]'"*-]*?\b(title|body|message|ref|label|name|email|default_branch|page_name)\b/;
+// Fields of github.event that cannot carry shell syntax; every other event field is untrusted.
+const SAFE_FIELDS = new Set(
+  'number id node_id sha action state merged draft created deleted forced size login url html_url created_at updated_at run_id run_number run_attempt workflow_id conclusion status'.split(
+    ' '
+  )
+);
+const SAFE_ROOTS = /^(repository|inputs|installation|organization|enterprise)\b/;
 const EXPRESSION = /\$\{\{((?:(?!\}\}).)*)\}\}/g;
-const PR_HEAD_REF =
-  /\b(ref|repository)\s*:\s*\$\{\{.*(pull_request\.head\.(sha|ref|repo)|github\.head_ref|merge_commit_sha)|refs\/pull\/|\bgh\s+pr\s+checkout\b/;
+export const PR_HEAD_REF =
+  /\b(ref|repository)\s*:\s*\$\{\{.*(pull_request\.head\.(sha|ref|repo)|github\.head_ref|merge_commit_sha|workflow_run\.head_(sha|branch|repository|commit))|refs\/pull\/|\bgh\s+pr\s+checkout\b/;
 const PRIVILEGED = /\b(pull_request_target|workflow_run)\b/;
 const BLOCK_SCALAR = /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*(#.*)?$/;
 
+/** Bracket access such as github['event']["issue"] read as github.event.issue. */
+const normalize = expression => expression.replace(/\[\s*['"]([\w-]+)['"]\s*\]/g, '.$1');
+
 /** Whether any `${{ }}` expression on the line reads text an author controls. */
 export function untrusted(text) {
-  return [...text.matchAll(EXPRESSION)].some(match => UNTRUSTED.test(match[1]));
+  return [...text.matchAll(EXPRESSION)].some(match => {
+    const expression = normalize(match[1]);
+    if (/\bgithub\.head_ref\b/.test(expression)) return true;
+    return [...expression.matchAll(/\bgithub\.event\b((?:\.[\w-]+|\.\*)*)/g)].some(([, path]) => {
+      const parts = path.split('.').filter(Boolean);
+      if (SAFE_ROOTS.test(parts.join('.'))) return false;
+      return !parts.length || !SAFE_FIELDS.has(parts.at(-1));
+    });
+  });
 }
+
 const USES = /\buses:\s*['"]?([\w.-]+)\/[\w./-]+@([\w.-]+)/;
 const indent = line => line.match(/^\s*/)[0].length;
 
