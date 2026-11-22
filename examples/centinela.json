@@ -1,0 +1,9 @@
+{
+  "maintainers": ["your-login"],
+  "license": "MIT",
+  "paths": {
+    "sensitive": ["scripts/release.sh"]
+  },
+  "issues": { "productName": "Your app" },
+  "links": { "security": "SECURITY.md" }
+}

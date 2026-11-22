@@ -1,0 +1,98 @@
+{
+  "maintainers": [],
+  "skipAuthors": ["dependabot[bot]", "renovate[bot]", "github-actions[bot]", "release-please[bot]"],
+  "optInLabel": "triage",
+  "overrideLabel": "triage: approved",
+  "statusContext": "centinela",
+  "license": null,
+  "labels": {
+    "waitingOnAuthor": { "name": "status: waiting-on-author", "color": "fbca04" },
+    "needsMaintainer": { "name": "status: needs-maintainer", "color": "d93f0b" },
+    "needsInfo": { "name": "needs-info", "color": "c5def5" },
+    "size": {
+      "XS": { "max": 10, "color": "3cbf00" },
+      "S": { "max": 100, "color": "5d9801" },
+      "M": { "max": 400, "color": "7f7203" },
+      "L": { "max": 800, "color": "a14c05" },
+      "XL": { "max": 1500, "color": "c32607" },
+      "XXL": { "max": null, "color": "e50009" }
+    }
+  },
+  "size": {
+    "justifyFrom": "XL",
+    "ignore": [
+      "**/package-lock.json",
+      "**/pnpm-lock.yaml",
+      "**/yarn.lock",
+      "**/bun.lock",
+      "**/bun.lockb",
+      "**/Cargo.lock",
+      "**/go.sum",
+      "**/Package.resolved",
+      "CHANGELOG.md",
+      "**/__snapshots__/**",
+      "**/*.snap"
+    ]
+  },
+  "pullRequest": {
+    "conventionalTitle": true,
+    "sections": [
+      { "id": "what", "names": ["what", "qué", "que"], "label": { "en": "What", "es": "Qué" } },
+      {
+        "id": "why",
+        "names": ["why", "por qué", "por que"],
+        "label": { "en": "Why", "es": "Por qué" }
+      },
+      {
+        "id": "howToTest",
+        "names": ["how to test", "cómo probar", "como probar"],
+        "label": { "en": "How to test", "es": "Cómo probar" }
+      }
+    ]
+  },
+  "paths": {
+    "ui": ["**/*.tsx", "**/*.jsx", "**/*.vue", "**/*.svelte", "**/*.css", "**/*.scss", "**/*.html"],
+    "source": [
+      "src/**",
+      "lib/**",
+      "apps/*/src/**",
+      "packages/*/src/**",
+      "cmd/**",
+      "internal/**",
+      "pkg/**",
+      "Sources/**"
+    ],
+    "tests": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*_test.go",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/Tests/**",
+      "e2e/**"
+    ],
+    "sensitive": []
+  },
+  "language": {
+    "typos": true,
+    "typosExclude": [],
+    "spanishRegister": null,
+    "localeParity": null
+  },
+  "rules": {
+    "electron": false
+  },
+  "deps": {
+    "minAgeDays": 14,
+    "blockedLicenses": ["GPL", "AGPL", "LGPL", "SSPL"]
+  },
+  "issues": {
+    "productName": null,
+    "bugLabel": "bug"
+  },
+  "links": {
+    "security": null,
+    "rules": null
+  }
+}

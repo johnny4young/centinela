@@ -1,0 +1,75 @@
+name: Centinela
+description: Polite first-pass review of pull requests and issues from outside contributors.
+author: johnny4young
+branding:
+  icon: shield
+  color: orange
+
+# Centinela reads the contribution only as data through the GitHub API. Call it
+# from pull_request_target and issues workflows and never check out PR code in
+# the same job: that job holds a write token.
+inputs:
+  app-client-id:
+    description: Client ID of the GitHub App that posts as Centinela. Leave empty to post as github-actions.
+    required: false
+    default: ''
+  app-private-key:
+    description: Private key of that GitHub App.
+    required: false
+    default: ''
+  github-token:
+    description: Token used when no GitHub App is configured.
+    required: false
+    default: ${{ github.token }}
+  typos:
+    description: Check added lines for typos with crate-ci/typos.
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Read Node.js version
+      id: node
+      shell: bash
+      run: echo "version=$(cat "$GITHUB_ACTION_PATH/.nvmrc")" >> "$GITHUB_OUTPUT"
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: ${{ steps.node.outputs.version }}
+        check-latest: true
+
+    - name: Install typos
+      if: ${{ inputs.typos == 'true' }}
+      shell: bash
+      env:
+        TYPOS_VERSION: v1.51.1
+        TYPOS_SHA256: 93c301fd4120ff076e2cc2a6d6a61cab4a4bdb81899287c0938b452e56d1f454
+      run: |
+        archive="$RUNNER_TEMP/typos.tar.gz"
+        curl -fsSL -o "$archive" "https://github.com/crate-ci/typos/releases/download/${TYPOS_VERSION}/typos-${TYPOS_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+        echo "${TYPOS_SHA256}  $archive" | sha256sum --check --strict
+        mkdir -p "$RUNNER_TEMP/typos"
+        tar -xzf "$archive" -C "$RUNNER_TEMP/typos" ./typos
+        echo "TYPOS_BIN=$RUNNER_TEMP/typos/typos" >> "$GITHUB_ENV"
+
+    - name: Mint Centinela app token
+      id: app
+      if: ${{ inputs.app-client-id != '' }}
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.app-client-id }}
+        private-key: ${{ inputs.app-private-key }}
+        repositories: ${{ github.event.repository.name }}
+        permission-contents: read
+        permission-issues: write
+        permission-pull-requests: write
+        permission-statuses: write
+
+    - name: Review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ steps.app.outputs.token || inputs.github-token }}
+        CENTINELA_REQUIRE_TYPOS: ${{ inputs.typos == 'true' && '1' || '0' }}
+      run: node "$GITHUB_ACTION_PATH/src/centinela.mjs"
