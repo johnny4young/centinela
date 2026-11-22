@@ -1302,3 +1302,28 @@ test('a pull request review reads the template from the base branch', async () =
   assert.deepEqual(description.params.labels, [{ en: 'Verification', es: 'Cómo probar' }]);
   assert.ok(reads.includes('.github/PULL_REQUEST_TEMPLATE.md@b'));
 });
+
+test('heading parsing stays linear on hostile pull request bodies', async () => {
+  const { headingOf, normalizeHeading, sections, stripComments } =
+    await import('../src/lib/core.mjs');
+  assert.equal(headingOf('## What (v2)?'), 'What (v2)?');
+  assert.equal(headingOf('#### Deep'), null);
+  assert.equal(headingOf('##NoSpace'), null);
+  assert.equal(normalizeHeading('What (v2)?'), 'what');
+  assert.equal(normalizeHeading('How was this tested?'), 'how was this tested');
+  assert.equal(stripComments('a<!-- x -->b<!-- open'), 'ab');
+  const hostile = [
+    `## ${'('.repeat(50_000)}x`,
+    `## ${':'.repeat(50_000)}x`,
+    `## a${' '.repeat(50_000)}b`,
+    '<!--'.repeat(20_000),
+  ].join('\n');
+  const started = performance.now();
+  sections(hostile);
+  checkDescription({
+    title: 'feat: x',
+    body: hostile,
+    config: resolveConfig({ pullRequest: { sections: KNOWN_SECTIONS } }),
+  });
+  assert.ok(performance.now() - started < 500, 'parsing a hostile body must stay fast');
+});

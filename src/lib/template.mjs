@@ -1,3 +1,5 @@
+import { headingOf, normalizeHeading } from './core.mjs';
+
 // Where GitHub looks for a single pull request template, in its order of precedence.
 const CANDIDATES = [
   '.github/pull_request_template.md',
@@ -52,12 +54,6 @@ export const KNOWN_SECTIONS = [
 ];
 const KNOWN = KNOWN_SECTIONS;
 
-const clean = heading =>
-  heading
-    .trim()
-    .toLowerCase()
-    .replace(/[?:.]+$/, '');
-
 /**
  * Sections the author must fill: a heading whose body prompts with an HTML comment. Checklists,
  * headings without a prompt and optional-sounding headings are left out.
@@ -66,9 +62,9 @@ export function templateSections(template = '') {
   const sections = [];
   let current = null;
   for (const line of template.replace(/\r\n/g, '\n').split('\n')) {
-    const heading = line.match(/^#{2,3}\s+(.+?)\s*$/);
+    const heading = headingOf(line);
     if (heading) {
-      current = { heading: heading[1], prompt: false };
+      current = { heading, prompt: false };
       sections.push(current);
     } else if (current && /<!--/.test(line)) {
       current.prompt = true;
@@ -77,7 +73,7 @@ export function templateSections(template = '') {
   return sections
     .filter(s => s.prompt && !OPTIONAL.test(s.heading))
     .map(({ heading }) => {
-      const name = clean(heading);
+      const name = normalizeHeading(heading);
       // A heading the defaults know keeps its translations, so a Spanish body still passes.
       // Synonyms count, but the message names the heading the template uses.
       const known = KNOWN.find(s => s.names.includes(name));
