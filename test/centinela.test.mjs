@@ -864,3 +864,22 @@ test('the example workflow filters the same labels the defaults use', () => {
   }
   assert.doesNotMatch(workflow, /actions\/checkout/, 'the caller must never check out PR code');
 });
+
+test('bug titles are recognized by everyday wording in both languages', () => {
+  const body = 'It happens every time I print a long ticket from the sales screen.';
+  for (const title of [
+    'La app se cierra al imprimir',
+    'El inventario no carga',
+    'Pantalla en blanco al iniciar',
+    "Printing doesn't work",
+    'App hangs on startup',
+    "Window won't open",
+  ]) {
+    const findings = checkIssue({ title, body, labels: [], config });
+    assert.ok(
+      findings.some(f => f.id === 'issue-incomplete'),
+      `expected a bug report check for: ${title}`
+    );
+  }
+  assert.deepEqual(checkIssue({ title: 'Agregar recibos oscuros', body, labels: [], config }), []);
+});

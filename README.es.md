@@ -1,3 +1,5 @@
+<p align="center"><img src="./assets/logo.png" alt="Búho de Centinela" width="128" height="128"></p>
+
 # Centinela
 
 **Idioma:** Español · [English](./README.md)

@@ -277,9 +277,13 @@ export function checkPullRequest(ctx) {
 }
 
 const BUG_TITLE = words([
-  ...'bug error crash falla fallo problema broken fails failing freeze congela'.split(' '),
-  'no funciona',
-  'not working',
+  ...'bug bugs error errores crash crashes crashed crashea falla falló fallo problema broken fails failing freeze freezes frozen congela hangs exception excepción regression regresión roto rota wrong incorrecto'.split(
+    ' '
+  ),
+  ...['no funciona', 'deja de funcionar', 'se cierra', 'se cuelga', 'se traba', 'se bloquea'],
+  ...['no abre', 'no carga', 'no inicia', 'no arranca', 'no imprime', 'no guarda'],
+  ...['pantalla en blanco', 'not working', "doesn't work", 'does not work', 'stopped working'],
+  ...["won't open", "won't start", 'blank screen', 'stack trace'],
 ]);
 const SECURITY = words(
   'vulnerability vulnerabilidad exploit cve xss injection inyección rce bypass'.split(' ')

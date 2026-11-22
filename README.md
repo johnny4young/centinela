@@ -1,3 +1,5 @@
+<p align="center"><img src="./assets/logo.png" alt="Centinela owl" width="128" height="128"></p>
+
 # Centinela
 
 **Language:** English · [Español](./README.es.md)
