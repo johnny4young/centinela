@@ -208,7 +208,6 @@ export async function triagePullRequest({
   const workflows = await Promise.all(
     files
       .filter(file => isWorkflow(file.filename) && file.status !== 'removed')
-      .slice(0, 10)
       .map(async file => ({
         file: file.filename,
         content: await fileAt(file.filename, pr.head.sha),

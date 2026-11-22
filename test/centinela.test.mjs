@@ -1055,13 +1055,13 @@ test('workflow changes are checked for injection, privileged checkouts and timeo
     workflows: [{ file: '.github/workflows/greet.yml', content }],
   });
   assert.deepEqual(
-    findings.map(f => `${f.id}:${f.line}`),
+    findings.map(f => `${f.id}:${f.line}`).sort(),
     [
-      'workflow-write-all:3',
-      'workflow-pr-target-checkout:10',
-      'workflow-unpinned-action:11',
       'workflow-injection:17',
+      'workflow-pr-target-checkout:10',
       'workflow-timeout:5',
+      'workflow-unpinned-action:11',
+      'workflow-write-all:3',
     ]
   );
 });
@@ -1105,4 +1105,72 @@ test('a pull request review uses the detected stack and fetches changed workflow
   const found = findings.map(f => f.id);
   assert.ok(found.includes('react-dangerous-html'));
   assert.ok(found.includes('workflow-timeout'));
+});
+
+test('workflow checks resist YAML tricks and review a newly privileged workflow in full', async () => {
+  const { checkWorkflows, runLines, untrusted } = await import('../src/lib/workflows.mjs');
+  assert.ok(untrusted("echo ${{ format('{0}', github.event.issue.title) }}"));
+  assert.ok(untrusted('echo ${{ toJSON(github.event) }}'));
+  assert.ok(
+    !untrusted('echo ${{ github.event.pull_request.number }} ${{ github.event.inputs.name }}')
+  );
+  const tricky = [
+    'jobs:',
+    '  a:',
+    '    steps:',
+    '      - run: | # comment',
+    '          echo "${{ github.event.issue.body }}"',
+    '      - run: "echo one',
+    '          ${{ github.head_ref }}"',
+  ].join('\n');
+  assert.deepEqual(
+    [...runLines(tricky)].sort((a, b) => a - b),
+    [5, 6, 7]
+  );
+
+  const base = [
+    'on:',
+    '  issues:',
+    'jobs:',
+    '  a:',
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 5',
+    '    steps:',
+    '      - run: echo "${{ github.event.issue.title }}"',
+  ];
+  const head = [...base];
+  head.splice(2, 0, '  workflow_run:');
+  const content = head.join('\n');
+  const files = [
+    {
+      filename: '.github/workflows/a.yml',
+      status: 'modified',
+      patch: '@@ -2,0 +3,1 @@\n+  workflow_run:',
+    },
+    { filename: '.github/workflows/b.yml', status: 'modified', patch: '@@ -1,0 +1,1 @@\n+x' },
+  ];
+  const findings = checkWorkflows({
+    files,
+    owner: 'o',
+    workflows: [
+      { file: '.github/workflows/a.yml', content },
+      { file: '.github/workflows/b.yml', content: null },
+    ],
+  });
+  assert.deepEqual(
+    findings.map(f => `${f.id}:${f.line}`),
+    ['workflow-injection:9', 'workflow-unread:null']
+  );
+});
+
+test('security pack rules also scan test files', async () => {
+  const { applyStack } = await import('../src/lib/packs.mjs');
+  const { checkPatterns } = await import('../src/lib/checks.mjs');
+  const { config: effective, rules } = applyStack(defaults, { packs: ['electron'], paths: [] });
+  const findings = checkPatterns({
+    config: effective,
+    rules,
+    files: [file('src/__tests__/window.test.ts', ['  sandbox: false,', 'readFileSync(p)'])],
+  });
+  assert.deepEqual(ids(findings), ['electron-hardening:blocking']);
 });

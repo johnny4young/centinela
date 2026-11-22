@@ -1,7 +1,7 @@
 /**
  * Stack packs: rules and paths that apply when a repository uses a stack. Patterns run on added
- * lines only and skip test files unless `tests: true`. A rule without a pattern fires once for
- * each matching file.
+ * lines only. Security rules set `tests: true` so a test file cannot hide them; performance rules
+ * skip tests. A rule without a pattern fires once for each matching file.
  */
 const MANIFEST_SKIP = /(^|\/)(node_modules|fixtures|examples|test|tests|e2e|vendor)\//;
 const NODE_SERVERS = ['fastify', 'express', '@trpc/server', 'koa', 'hono', '@nestjs/core'];
@@ -16,12 +16,14 @@ export const PACKS = {
     rules: [
       {
         id: 'electron-hardening',
+        tests: true,
         severity: 'blocking',
         pattern:
           /\b(sandbox|contextIsolation|webSecurity)\s*:\s*false\b|\bnodeIntegration\s*:\s*true\b/,
       },
       {
         id: 'electron-preload-node',
+        tests: true,
         severity: 'blocking',
         paths: ['**/preload/**', '**/preload.*'],
         pattern:
@@ -29,11 +31,17 @@ export const PACKS = {
       },
       {
         id: 'electron-remote',
+        tests: true,
         severity: 'blocking',
         pattern: /@electron\/remote|\benableRemoteModule\b/,
       },
       { id: 'electron-sync-ipc', severity: 'maintainer', pattern: /\bsendSync\s*\(/ },
-      { id: 'electron-open-external', severity: 'maintainer', pattern: /\bopenExternal\s*\(/ },
+      {
+        id: 'electron-open-external',
+        tests: true,
+        severity: 'maintainer',
+        pattern: /\bopenExternal\s*\(/,
+      },
       {
         id: 'electron-main-sync-io',
         severity: 'suggestion',
@@ -46,7 +54,12 @@ export const PACKS = {
     name: 'React',
     detect: ({ deps }) => deps.has('react'),
     rules: [
-      { id: 'react-dangerous-html', severity: 'maintainer', pattern: /dangerouslySetInnerHTML/ },
+      {
+        id: 'react-dangerous-html',
+        tests: true,
+        severity: 'maintainer',
+        pattern: /dangerouslySetInnerHTML/,
+      },
       { id: 'react-async-effect', severity: 'suggestion', pattern: /\buseEffect\(\s*async\b/ },
     ],
   },
@@ -69,6 +82,7 @@ export const PACKS = {
       },
       {
         id: 'sql-interpolation',
+        tests: true,
         severity: 'maintainer',
         pattern: /\b(sql\.raw|\.raw|\.exec|\.prepare|\.query)\(\s*`[^`]*\$\{/,
       },
@@ -115,6 +129,7 @@ export const PACKS = {
     rules: [
       {
         id: 'rust-unsafe',
+        tests: true,
         severity: 'maintainer',
         pattern: /\bunsafe\s*(\{|fn\b|impl\b|extern\b)/,
       },

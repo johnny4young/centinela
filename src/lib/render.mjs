@@ -102,7 +102,9 @@ const MESSAGES = {
     'workflow-injection': () =>
       'It expands text a contributor controls (a title, body, branch name or message) inside a `run:` script, which allows command injection. Please pass it through `env:` and quote the variable.',
     'workflow-pr-target-checkout': () =>
-      'A `pull_request_target` workflow checks out or references the pull request head. That job holds a write token, so contributed code must never run in it.',
+      'A privileged workflow (`pull_request_target` or `workflow_run`) checks out or references the pull request head. That job holds a write token, so contributed code must never run in it.',
+    'workflow-unread': () =>
+      'The workflow could not be read, so it was not checked. A maintainer needs to review it by hand.',
     'workflow-write-all': () =>
       'It grants `permissions: write-all`. Please grant only the permissions the job needs.',
     'workflow-unpinned-action': () =>
@@ -197,7 +199,9 @@ const MESSAGES = {
     'workflow-injection': () =>
       'Expande texto que controla un colaborador (un título, cuerpo, nombre de rama o mensaje) dentro de un script `run:`, lo que permite inyectar comandos. Por favor páselo por `env:` y use la variable entre comillas.',
     'workflow-pr-target-checkout': () =>
-      'Un workflow `pull_request_target` descarga o referencia el head de la pull request. Ese job tiene un token con permisos de escritura, así que nunca debe ejecutar código contribuido.',
+      'Un workflow privilegiado (`pull_request_target` o `workflow_run`) descarga o referencia el head de la pull request. Ese job tiene un token con permisos de escritura, así que nunca debe ejecutar código contribuido.',
+    'workflow-unread': () =>
+      'No se pudo leer el workflow, así que no se revisó. Un mantenedor debe revisarlo a mano.',
     'workflow-write-all': () =>
       'Otorga `permissions: write-all`. Por favor otorgue solo los permisos que el job necesita.',
     'workflow-unpinned-action': () =>
