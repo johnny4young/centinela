@@ -1,5 +1,6 @@
 import { linkFor } from './config.mjs';
 import { markerFor } from './core.mjs';
+import { packName } from './packs.mjs';
 
 const code = value => `\`${String(value).replace(/`/g, "'").replace(/\s+/g, ' ')}\``;
 const list = values => values.map(code).join(', ');
@@ -68,6 +69,46 @@ const MESSAGES = {
       'It looks like a credential or private key. Please remove it and rotate it if it was real.',
     'electron-hardening': () =>
       'It disables an Electron security setting (sandbox, context isolation, web security or node integration). The renderer must stay sandboxed.',
+    'electron-preload-node': () =>
+      'The preload script imports a Node.js module. The renderer is sandboxed, so the preload can only use `contextBridge` and `ipcRenderer.invoke`; move the work to the main process behind an IPC handler.',
+    'electron-remote': () =>
+      'It uses the remote module, which gives the renderer direct access to the main process. Please use an IPC handler instead.',
+    'electron-sync-ipc': () =>
+      'It uses synchronous IPC (`sendSync`), which freezes the window until the main process answers. Please use `ipcRenderer.invoke` instead.',
+    'electron-open-external': () =>
+      'It opens an external URL. A maintainer needs to confirm the URL is validated, since `openExternal` can launch any protocol handler.',
+    'electron-main-sync-io': () =>
+      'It adds synchronous file or process work to the main process, which freezes every window while it runs. Please use the async version.',
+    'react-dangerous-html': () =>
+      'It renders raw HTML with `dangerouslySetInnerHTML`. A maintainer needs to confirm the content is sanitized.',
+    'react-async-effect': () =>
+      'An `async` function passed straight to `useEffect` cannot return a cleanup, so late results can update an unmounted component. Please call an async function inside the effect and ignore stale results.',
+    'server-sync-io': () =>
+      'It adds synchronous file or process work to server code, which blocks every request until it finishes. Please use the async version.',
+    'sql-interpolation': () =>
+      'It builds raw SQL with template interpolation, which can allow SQL injection. Please use bound parameters.',
+    'swift-unchecked-sendable': () =>
+      'It adds `@unchecked Sendable` without a comment. Please explain on the same line why the type is safe to share across threads.',
+    'swift-nonisolated-unsafe': () =>
+      'It adds `nonisolated(unsafe)`, which turns off data-race checking for that declaration. A maintainer needs to confirm it is safe.',
+    'swift-main-sync': () =>
+      'It calls `DispatchQueue.main.sync`, which deadlocks when it runs on the main thread and blocks the caller otherwise. Please use `await MainActor.run` or an async hop.',
+    'swift-sleep': () =>
+      'It sleeps the thread. On the main actor this freezes the UI; please use `try await Task.sleep` instead.',
+    'swift-xcodeproj-edit': () =>
+      'It edits the Xcode project, which is generated from `project.yml` by XcodeGen. Please make the change in `project.yml` and regenerate.',
+    'rust-unsafe': () =>
+      'It adds `unsafe` code. A maintainer needs to review it; please document the invariants that make it sound.',
+    'workflow-injection': () =>
+      'It expands text a contributor controls (a title, body, branch name or message) inside a `run:` script, which allows command injection. Please pass it through `env:` and quote the variable.',
+    'workflow-pr-target-checkout': () =>
+      'A `pull_request_target` workflow checks out or references the pull request head. That job holds a write token, so contributed code must never run in it.',
+    'workflow-write-all': () =>
+      'It grants `permissions: write-all`. Please grant only the permissions the job needs.',
+    'workflow-unpinned-action': () =>
+      'It uses a third-party action by tag or branch. Please pin it to a full commit SHA so a moved tag cannot change what runs.',
+    'workflow-timeout': p =>
+      `The job ${code(p.job)} has no \`timeout-minutes\`, so a hung run can hold a runner for hours. Please set one.`,
     'dynamic-code': () => 'It evaluates code dynamically (`eval` or `new Function`).',
     'process-spawn': () => 'It spawns processes from new code.',
     'pipe-to-shell': () => 'It pipes a download straight into a shell.',
@@ -123,6 +164,46 @@ const MESSAGES = {
       'Parece una credencial o clave privada. Por favor elimínela y revóquela si era real.',
     'electron-hardening': () =>
       'Desactiva una protección de Electron (sandbox, aislamiento de contexto, seguridad web o integración con Node). El renderer debe seguir aislado.',
+    'electron-preload-node': () =>
+      'El script de preload importa un módulo de Node.js. El renderer está aislado, así que el preload solo puede usar `contextBridge` e `ipcRenderer.invoke`; mueva el trabajo al proceso principal detrás de un handler de IPC.',
+    'electron-remote': () =>
+      'Usa el módulo remote, que da al renderer acceso directo al proceso principal. Por favor use un handler de IPC.',
+    'electron-sync-ipc': () =>
+      'Usa IPC síncrono (`sendSync`), que congela la ventana hasta que responde el proceso principal. Por favor use `ipcRenderer.invoke`.',
+    'electron-open-external': () =>
+      'Abre una URL externa. Un mantenedor debe confirmar que la URL se valida, porque `openExternal` puede abrir cualquier protocolo.',
+    'electron-main-sync-io': () =>
+      'Agrega trabajo síncrono de archivos o procesos en el proceso principal, que congela todas las ventanas mientras corre. Por favor use la versión asíncrona.',
+    'react-dangerous-html': () =>
+      'Renderiza HTML sin procesar con `dangerouslySetInnerHTML`. Un mantenedor debe confirmar que el contenido está sanitizado.',
+    'react-async-effect': () =>
+      'Una función `async` pasada directamente a `useEffect` no puede devolver una limpieza, así que un resultado tardío puede actualizar un componente desmontado. Por favor llame una función asíncrona dentro del efecto e ignore los resultados viejos.',
+    'server-sync-io': () =>
+      'Agrega trabajo síncrono de archivos o procesos en el servidor, que bloquea todas las peticiones hasta que termina. Por favor use la versión asíncrona.',
+    'sql-interpolation': () =>
+      'Arma SQL con interpolación de texto, lo que puede permitir inyección SQL. Por favor use parámetros.',
+    'swift-unchecked-sendable': () =>
+      'Agrega `@unchecked Sendable` sin comentario. Por favor explique en la misma línea por qué el tipo es seguro entre hilos.',
+    'swift-nonisolated-unsafe': () =>
+      'Agrega `nonisolated(unsafe)`, que desactiva la verificación de carreras de datos en esa declaración. Un mantenedor debe confirmar que es seguro.',
+    'swift-main-sync': () =>
+      'Llama `DispatchQueue.main.sync`, que bloquea la app si corre en el hilo principal y detiene a quien lo llama en los demás casos. Por favor use `await MainActor.run`.',
+    'swift-sleep': () =>
+      'Duerme el hilo. En el main actor esto congela la interfaz; por favor use `try await Task.sleep`.',
+    'swift-xcodeproj-edit': () =>
+      'Modifica el proyecto de Xcode, que se genera desde `project.yml` con XcodeGen. Por favor haga el cambio en `project.yml` y regenere el proyecto.',
+    'rust-unsafe': () =>
+      'Agrega código `unsafe`. Un mantenedor debe revisarlo; por favor documente las invariantes que lo hacen correcto.',
+    'workflow-injection': () =>
+      'Expande texto que controla un colaborador (un título, cuerpo, nombre de rama o mensaje) dentro de un script `run:`, lo que permite inyectar comandos. Por favor páselo por `env:` y use la variable entre comillas.',
+    'workflow-pr-target-checkout': () =>
+      'Un workflow `pull_request_target` descarga o referencia el head de la pull request. Ese job tiene un token con permisos de escritura, así que nunca debe ejecutar código contribuido.',
+    'workflow-write-all': () =>
+      'Otorga `permissions: write-all`. Por favor otorgue solo los permisos que el job necesita.',
+    'workflow-unpinned-action': () =>
+      'Usa una action de terceros por tag o rama. Por favor fíjela a un SHA completo para que un tag movido no cambie lo que se ejecuta.',
+    'workflow-timeout': p =>
+      `El job ${code(p.job)} no tiene \`timeout-minutes\`, así que una ejecución colgada puede ocupar un runner por horas. Por favor defina uno.`,
     'dynamic-code': () => 'Evalúa código dinámicamente (`eval` o `new Function`).',
     'process-spawn': () => 'Lanza procesos desde código nuevo.',
     'pipe-to-shell': () => 'Envía una descarga directamente a una shell.',
@@ -181,7 +262,12 @@ const TEXT = {
 function lines(items, language, ctx) {
   const seen = new Map();
   for (const item of items) {
-    const text = MESSAGES[language][item.id](item.params, ctx);
+    const custom = item.params?.message;
+    const text = custom
+      ? typeof custom === 'string'
+        ? custom
+        : (custom[language] ?? custom.en)
+      : MESSAGES[language][item.id](item.params, ctx);
     const group = seen.get(text) ?? { item, locations: [] };
     if (item.file) group.locations.push(item.line ? `${item.file}:${item.line}` : item.file);
     seen.set(text, group);
@@ -207,6 +293,7 @@ export function renderComment({
   rulesVersion,
   approved,
   approvedSha,
+  stack = [],
 }) {
   const text = TEXT[language];
   const repoUrl = `https://github.com/${repo}`;
@@ -236,6 +323,7 @@ export function renderComment({
   const rules = rulesFile
     ? `[${text.rules} ${rulesVersion.slice(0, 8)}](${url(rulesFile)})`
     : `${text.rules} ${rulesVersion.slice(0, 8)}`;
-  out.push(`<sub>[Centinela](${HOME}) · ${rules} · ${text.footer(pr)}</sub>`);
+  const detected = stack.length ? ` · stack: ${stack.map(packName).join(', ')}` : '';
+  out.push(`<sub>[Centinela](${HOME}) · ${rules}${detected} · ${text.footer(pr)}</sub>`);
   return out.join('\n');
 }

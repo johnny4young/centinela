@@ -54,6 +54,10 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
     pullCommits: number => paginate(`/{repo}/pulls/${number}/commits`, 250),
     comments: number => paginate(`/{repo}/issues/${number}/comments`),
     repository: () => request('GET', '/{repo}').then(r => r.data),
+    async tree(ref) {
+      const { data } = await request('GET', `/{repo}/git/trees/${ref}?recursive=1`);
+      return data.tree.filter(entry => entry.type === 'blob').map(entry => entry.path);
+    },
     async fileAt(path, ref) {
       const encoded = path.split('/').map(encodeURIComponent).join('/');
       const { data } = await request('GET', `/{repo}/contents/${encoded}?ref=${ref}`, {

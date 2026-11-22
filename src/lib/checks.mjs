@@ -1,4 +1,5 @@
 import { addedLines, matcher, section, sections, words } from './core.mjs';
+import { checkWorkflows } from './workflows.mjs';
 
 export const SEVERITIES = ['blocking', 'maintainer', 'suggestion'];
 
@@ -24,13 +25,6 @@ const SUSPICIOUS = [
     severity: 'blocking',
     pattern:
       /AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|sk-ant-[\w-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  },
-  {
-    id: 'electron-hardening',
-    severity: 'blocking',
-    pack: 'electron',
-    pattern:
-      /\b(sandbox|contextIsolation|webSecurity)\s*:\s*false\b|\bnodeIntegration\s*:\s*true\b/,
   },
   { id: 'dynamic-code', severity: 'maintainer', pattern: /\beval\s*\(|\bnew\s+Function\s*\(/ },
   {
@@ -212,7 +206,6 @@ export function checkSensitive(ctx) {
         results.push(finding('authorship', 'maintainer', {}, { file: file.filename, line }));
       }
       for (const rule of SUSPICIOUS) {
-        if (rule.pack && !ctx.config.rules[rule.pack]) continue;
         if (rule.id === 'obfuscation' && OBFUSCATION_EXEMPT(file.filename)) continue;
         if (rule.pattern.test(text)) {
           results.push(finding(rule.id, rule.severity, {}, { file: file.filename, line }));
@@ -264,13 +257,54 @@ export function checkDependencies(ctx) {
   return results;
 }
 
+/** Compile the project's own rules from the config into the shape pack rules use. */
+export function customRules(config) {
+  return (config.rules.custom ?? []).map(rule => ({
+    ...rule,
+    pattern: rule.pattern
+      ? new RegExp(rule.pattern, (rule.flags ?? '').replace(/[gy]/g, ''))
+      : null,
+    unless: rule.unless ? new RegExp(rule.unless) : null,
+  }));
+}
+
+/** Stack and project rules: a pattern fires per added line, a path-only rule once per file. */
+export function checkPatterns(ctx) {
+  const results = [];
+  const isTest = matcher(ctx.config.paths.tests);
+  const rules = [...(ctx.rules ?? []), ...customRules(ctx.config)];
+  for (const rule of rules) {
+    const inPaths = rule.paths ? matcher(rule.paths) : () => true;
+    const excluded = matcher(rule.exclude ?? []);
+    const params = rule.message ? { message: rule.message } : {};
+    for (const file of ctx.files) {
+      const name = file.filename;
+      if (file.status === 'removed' || !inPaths(name) || excluded(name)) continue;
+      if (!rule.tests && isTest(name)) continue;
+      if (!rule.pattern) {
+        results.push(finding(rule.id, rule.severity, params, { file: name }));
+        continue;
+      }
+      for (const { line, text } of addedLines(file.patch)) {
+        if (rule.pattern.test(text) && !rule.unless?.test(text)) {
+          results.push(finding(rule.id, rule.severity, params, { file: name, line }));
+        }
+      }
+    }
+  }
+  return results;
+}
+
 export function checkPullRequest(ctx) {
+  const owner = ctx.repo?.split('/')[0];
   return [
     ...checkDescription(ctx),
     ...checkSize(ctx),
     ...checkEvidence(ctx),
     ...checkLanguage(ctx),
     ...checkSensitive(ctx),
+    ...checkPatterns(ctx),
+    ...(ctx.config.rules.workflows === false ? [] : checkWorkflows({ ...ctx, owner })),
     ...checkIdentity(ctx),
     ...checkDependencies(ctx),
   ];

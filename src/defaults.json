@@ -80,8 +80,11 @@
     "spanishRegister": null,
     "localeParity": null
   },
+  "stack": "auto",
   "rules": {
-    "electron": false
+    "electron": false,
+    "workflows": true,
+    "custom": []
   },
   "deps": {
     "minAgeDays": 14,

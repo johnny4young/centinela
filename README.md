@@ -67,11 +67,54 @@ The exception is `paths.sensitive`, which always keeps the built-in floor (workf
 | `language.typos`, `typosExclude`                         | Typo check on added lines                                                              |
 | `language.spanishRegister`                               | `{ "register": "usted" or "tu", "paths": [...] }` flags voseo, and tú in usted copy    |
 | `language.localeParity`                                  | `{ "dir": "src/locales", "languages": ["en", "es"] }` flags keys missing in a language |
-| `rules.electron`                                         | Block disabling the Electron sandbox, context isolation or web security                |
+| `stack`                                                  | `"auto"` detects the stack packs below from the base branch; a list forces them        |
+| `rules.workflows`                                        | Check changed workflows for injection, privileged checkouts, pins and timeouts         |
+| `rules.custom`                                           | Your own rules; see [Project rules](#project-rules)                                    |
 | `deps`                                                   | Minimum release age in days and blocked license prefixes                               |
 | `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                        |
 | `links.security`, `links.rules`                          | Repository paths, one string or one per language, linked from the comment              |
 | `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                        |
+
+## Stack packs
+
+Centinela reads the base branch tree and its package manifests, turns on the packs that match, and names them in the comment footer.
+Each pack adds rules for added lines and paths that need screenshots, tests or a maintainer.
+
+| Pack        | Detected by                                         | Looks for                                                                                                                             |
+| ----------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Electron    | an `electron` dependency                            | Disabled sandbox or isolation, Node modules in preload, remote module, `sendSync`, `openExternal`, sync I/O in main                   |
+| React       | a `react` dependency                                | `dangerouslySetInnerHTML`, async functions passed to `useEffect`                                                                      |
+| Node server | `fastify`, `express`, `@trpc/server`, `koa`, `hono` | Sync I/O in server code, SQL built with template interpolation                                                                        |
+| Swift       | `Package.swift`, an Xcode project or `project.yml`  | Uncommented `@unchecked Sendable`, `nonisolated(unsafe)`, `DispatchQueue.main.sync`, thread sleeps, hand edits to an XcodeGen project |
+| Rust        | `Cargo.toml`                                        | `unsafe` code, changes to `build.rs`                                                                                                  |
+
+Changed workflows are always checked: untrusted text in `run:` scripts, `pull_request_target` jobs that reference the PR head, `permissions: write-all`, third-party actions without a SHA pin, and jobs without `timeout-minutes`.
+
+## Project rules
+
+`rules.custom` turns the invariants in your `AGENTS.md` into checks. A rule with a `pattern` fires on each added line that matches; a rule with only `paths` fires once for each changed file.
+
+```json
+{
+  "rules": {
+    "custom": [
+      {
+        "id": "tenant-scope",
+        "severity": "maintainer",
+        "paths": ["packages/server/src/trpc/routers/**"],
+        "pattern": "\\.from\\(",
+        "unless": "tenantId",
+        "message": {
+          "en": "Every query must scope by ctx.tenantId.",
+          "es": "Toda consulta debe filtrar por ctx.tenantId."
+        }
+      }
+    ]
+  }
+}
+```
+
+Keys: `id`, `severity` (`blocking`, `maintainer` or `suggestion`), `message` (a string or one per language), `pattern` and `flags`, `unless` (skip lines that also match it), `paths`, `exclude`, and `tests: true` to include test files.
 
 ## Trying a change
 

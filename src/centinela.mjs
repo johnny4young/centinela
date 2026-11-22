@@ -8,6 +8,8 @@ import { parseConfig } from './lib/config.mjs';
 import { detectLanguage, readApproval, readMarker, reviewKey, sha256 } from './lib/core.mjs';
 import { dependencyChanges, findTypos, localeGaps } from './lib/enrich.mjs';
 import { createClient } from './lib/github.mjs';
+import { applyStack, detectStack } from './lib/packs.mjs';
+import { isWorkflow } from './lib/workflows.mjs';
 import { renderComment } from './lib/render.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -196,6 +198,22 @@ export async function triagePullRequest({
     client.pullCommits(number),
   ]);
   const fileAt = (file, ref) => client.fileAt(file, ref);
+  const stack = await detectStack({
+    client,
+    ref: pr.base.sha,
+    setting: config.stack,
+    legacy: config.rules,
+  });
+  const { config: effective, rules } = applyStack(config, stack);
+  const workflows = await Promise.all(
+    files
+      .filter(file => isWorkflow(file.filename) && file.status !== 'removed')
+      .slice(0, 10)
+      .map(async file => ({
+        file: file.filename,
+        content: await fileAt(file.filename, pr.head.sha),
+      }))
+  );
   const [gaps, dependencies, typos] = await Promise.all([
     localeGaps({ files, fileAt, headSha: pr.head.sha, parity: config.language.localeParity }),
     dependencyChanges({ files, fileAt, baseSha: pr.base.sha, headSha: pr.head.sha }),
@@ -222,7 +240,10 @@ export async function triagePullRequest({
       verified: c.commit.verification?.verified === true,
       message: c.commit.message,
     })),
-    config,
+    config: effective,
+    rules,
+    workflows,
+    repo,
     localeGaps: gaps,
     dependencies,
     typos: typos ?? [],
@@ -233,6 +254,7 @@ export async function triagePullRequest({
     kind: 'pr',
     repo,
     config,
+    stack: stack.packs,
     author: pr.user.login,
     findings,
     language: detectLanguage(pr.title, pr.body ?? ''),

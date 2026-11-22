@@ -37,11 +37,44 @@ export function resolveConfig(project = {}) {
   if (!isObject(project)) throw new Error('centinela: the config must be a JSON object');
   const config = merge(DEFAULTS, project);
   config.paths.sensitive = [...new Set([...SENSITIVE_FLOOR, ...(config.paths.sensitive ?? [])])];
+  validateStack(config.stack);
+  config.rules.custom = (config.rules.custom ?? []).map(validateRule);
   const sizes = Object.keys(config.labels.size);
   if (!sizes.includes(config.size.justifyFrom)) {
     throw new Error(`centinela: size.justifyFrom must be one of ${sizes.join(', ')}`);
   }
   return config;
+}
+
+const SEVERITIES = ['blocking', 'maintainer', 'suggestion'];
+
+function validateStack(stack) {
+  if (stack === 'auto' || (Array.isArray(stack) && stack.every(id => typeof id === 'string')))
+    return;
+  throw new Error('centinela: stack must be "auto" or a list of pack ids');
+}
+
+/** A project rule needs an id, a severity, a message and a pattern or paths. */
+function validateRule(rule, index) {
+  const where = `rules.custom[${index}]`;
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(rule?.id ?? ''))
+    throw new Error(`centinela: ${where}.id must be lowercase words joined by hyphens`);
+  if (!SEVERITIES.includes(rule.severity))
+    throw new Error(`centinela: ${where}.severity must be one of ${SEVERITIES.join(', ')}`);
+  if (!rule.message) throw new Error(`centinela: ${where}.message is required`);
+  if (!rule.pattern && !rule.paths?.length)
+    throw new Error(`centinela: ${where} needs a pattern, paths or both`);
+  for (const key of ['pattern', 'unless']) {
+    if (!rule[key]) continue;
+    try {
+      new RegExp(rule[key], key === 'pattern' ? (rule.flags ?? '').replace(/[gy]/g, '') : '');
+    } catch (error) {
+      throw new Error(
+        `centinela: ${where}.${key} is not a valid regular expression: ${error.message}`
+      );
+    }
+  }
+  return rule;
 }
 
 export function parseConfig(text) {

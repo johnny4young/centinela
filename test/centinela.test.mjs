@@ -194,18 +194,12 @@ test('risky changes are flagged for a maintainer or blocked', () => {
   });
   assert.deepEqual(ids(findings), [
     'sensitive-paths:maintainer',
-    'electron-hardening:blocking',
     'hidden-unicode:blocking',
     'dynamic-code:maintainer',
     'lifecycle-script:maintainer',
     'authorship:maintainer',
     'binary:maintainer',
   ]);
-  const generic = checkSensitive({
-    config: defaults,
-    files: [file('src/window.ts', ['  sandbox: false,'])],
-  });
-  assert.deepEqual(generic, [], 'the Electron rules apply only when enabled');
 });
 
 test('identity trusts a maintainer only when that maintainer signed the commit', () => {
@@ -486,6 +480,7 @@ function fakeClient({ pr, issue, comments = [] }) {
     pullFiles: async () => [file('docs/a.md', ['hello'])],
     pullCommits: async () => [],
     fileAt: async () => null,
+    tree: async () => [],
     ensureLabel: async label => writes.push(['label', label.name]),
     upsertComment: async (number, existing, body) =>
       writes.push(['comment', existing?.id ?? null, body]),
@@ -882,4 +877,232 @@ test('bug titles are recognized by everyday wording in both languages', () => {
     );
   }
   assert.deepEqual(checkIssue({ title: 'Agregar recibos oscuros', body, labels: [], config }), []);
+});
+
+test('stack detection reads manifests and tracked paths, and skips fixtures', async () => {
+  const { detectPacks, detectStack, manifestPaths } = await import('../src/lib/packs.mjs');
+  assert.deepEqual(
+    manifestPaths(['package.json', 'apps/web/package.json', 'test/fixtures/app/package.json']),
+    ['package.json', 'apps/web/package.json']
+  );
+  assert.deepEqual(
+    detectPacks({
+      paths: ['project.yml', 'Cargo.toml'],
+      manifests: [{ dependencies: { react: '19' } }, { devDependencies: { electron: '45' } }],
+    }),
+    ['electron', 'react', 'swift', 'rust']
+  );
+  const files = {
+    'package.json': '{"devDependencies":{"vitest":"5"}}',
+    'packages/server/package.json': '{"dependencies":{"fastify":"5"}}',
+  };
+  const client = {
+    tree: async () => ['package.json', 'packages/server/package.json', 'src/a.ts'],
+    fileAt: async name => files[name] ?? null,
+  };
+  assert.deepEqual((await detectStack({ client, ref: 'b' })).packs, ['node-server']);
+  assert.deepEqual(
+    (await detectStack({ client, ref: 'b', setting: ['swift'], legacy: { electron: true } })).packs,
+    ['swift', 'electron']
+  );
+});
+
+test('stack packs add paths and rules that review added lines', async () => {
+  const { applyStack } = await import('../src/lib/packs.mjs');
+  const { checkPatterns } = await import('../src/lib/checks.mjs');
+  const stack = { packs: ['electron', 'swift', 'node-server'], paths: ['project.yml'] };
+  const { config: effective, rules } = applyStack(defaults, stack);
+  assert.ok(matcher(effective.paths.sensitive)('apps/desktop/src/preload/index.ts'));
+  assert.ok(matcher(effective.paths.tests)('Apps/Gancho/GanchoTests/StoreTests.swift'));
+  const findings = checkPatterns({
+    config: effective,
+    rules,
+    files: [
+      file('apps/desktop/src/preload/index.ts', ["import { readFile } from 'node:fs';"]),
+      file('apps/desktop/src/main/window.ts', ['  sandbox: false,', 'ipcRenderer.sendSync("x")']),
+      file('Apps/Gancho/Store.swift', [
+        'final class A: @unchecked Sendable {}',
+        'final class B: @unchecked Sendable {} // guarded by lock',
+        'DispatchQueue.main.sync { }',
+      ]),
+      file('Apps/Gancho/GanchoTests/StoreTests.swift', ['DispatchQueue.main.sync { }']),
+      file('Gancho.xcodeproj/project.pbxproj', ['x']),
+      file('packages/server/src/routes/a.ts', ['const x = readFileSync(p)']),
+    ],
+  });
+  assert.deepEqual(ids(findings), [
+    'electron-hardening:blocking',
+    'electron-preload-node:blocking',
+    'electron-sync-ipc:maintainer',
+    'swift-unchecked-sendable:maintainer',
+    'swift-main-sync:maintainer',
+    'swift-xcodeproj-edit:maintainer',
+    'server-sync-io:suggestion',
+  ]);
+  const withoutXcodegen = applyStack(defaults, { packs: ['swift'], paths: [] });
+  assert.ok(!withoutXcodegen.rules.some(r => r.id === 'swift-xcodeproj-edit'));
+});
+
+test('project rules turn AGENTS.md invariants into checks', async () => {
+  const { checkPatterns } = await import('../src/lib/checks.mjs');
+  const project = resolveConfig({
+    rules: {
+      custom: [
+        {
+          id: 'no-rest-routes',
+          severity: 'blocking',
+          paths: ['packages/server/src/routes/**'],
+          message: { en: 'Use tRPC, not REST.', es: 'Use tRPC, no REST.' },
+        },
+        {
+          id: 'tenant-scope',
+          severity: 'maintainer',
+          pattern: '\\.from\\(',
+          unless: 'tenantId',
+          paths: ['packages/server/src/trpc/routers/**'],
+          message: 'Every query must scope by ctx.tenantId.',
+        },
+      ],
+    },
+  });
+  const findings = checkPatterns({
+    config: project,
+    files: [
+      file('packages/server/src/routes/new.ts', ['x']),
+      file('packages/server/src/trpc/routers/a.ts', [
+        'db.select().from(sales)',
+        'db.select().from(sales).where(eq(sales.tenantId, ctx.tenantId))',
+      ]),
+    ],
+  });
+  assert.deepEqual(ids(findings), ['no-rest-routes:blocking', 'tenant-scope:maintainer']);
+  const body = renderComment({
+    kind: 'pr',
+    repo: 'o/r',
+    config: project,
+    author: 'ana',
+    findings,
+    language: 'es',
+    key: 'k',
+    rulesVersion: 'r',
+    stack: ['electron', 'react'],
+  });
+  assert.match(body, /`packages\/server\/src\/routes\/new\.ts`: Use tRPC, no REST\./);
+  assert.match(body, /Every query must scope by ctx\.tenantId\./);
+  assert.match(body, /stack: Electron, React/);
+  for (const bad of [
+    { id: 'Bad Id', severity: 'blocking', pattern: 'x', message: 'm' },
+    { id: 'ok', severity: 'fatal', pattern: 'x', message: 'm' },
+    { id: 'ok', severity: 'blocking', message: 'm' },
+    { id: 'ok', severity: 'blocking', pattern: '(', message: 'm' },
+    { id: 'ok', severity: 'blocking', pattern: 'x' },
+  ]) {
+    assert.throws(() => resolveConfig({ rules: { custom: [bad] } }), /rules\.custom\[0\]/);
+  }
+  assert.throws(() => resolveConfig({ stack: 'swift' }), /stack must be/);
+});
+
+test('workflow changes are checked for injection, privileged checkouts and timeouts', async () => {
+  const { checkWorkflows, jobs, runLines } = await import('../src/lib/workflows.mjs');
+  const content = [
+    'on:',
+    '  pull_request_target:',
+    'permissions: write-all',
+    'jobs:',
+    '  greet:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - uses: actions/checkout@v7',
+    '        with:',
+    '          ref: ${{ github.event.pull_request.head.sha }}',
+    '      - uses: someone/tool@v2',
+    '      - uses: johnny4young/centinela@v1',
+    '      - name: Echo',
+    '        env:',
+    '          TITLE: ${{ github.event.pull_request.title }}',
+    '        run: |',
+    '          echo "${{ github.event.pull_request.title }}"',
+    '          echo "$TITLE ${{ github.event.pull_request.number }}"',
+    '        timeout-minutes: 1',
+    '  safe:',
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 5',
+    '    steps:',
+    '      - run: echo ok',
+  ].join('\n');
+  assert.deepEqual(
+    [...runLines(content)].sort((a, b) => a - b),
+    [17, 18, 24]
+  );
+  assert.deepEqual(
+    jobs(content).map(j => [j.name, j.timeout]),
+    [
+      ['greet', false],
+      ['safe', true],
+    ]
+  );
+  const lines = content.split('\n');
+  const files = [
+    {
+      filename: '.github/workflows/greet.yml',
+      status: 'added',
+      patch: `@@ -0,0 +1,${lines.length} @@\n${lines.map(l => `+${l}`).join('\n')}`,
+    },
+  ];
+  const findings = checkWorkflows({
+    files,
+    owner: 'johnny4young',
+    workflows: [{ file: '.github/workflows/greet.yml', content }],
+  });
+  assert.deepEqual(
+    findings.map(f => `${f.id}:${f.line}`),
+    [
+      'workflow-write-all:3',
+      'workflow-pr-target-checkout:10',
+      'workflow-unpinned-action:11',
+      'workflow-injection:17',
+      'workflow-timeout:5',
+    ]
+  );
+});
+
+test('a pull request review uses the detected stack and fetches changed workflows', async () => {
+  process.env.TYPOS_BIN = '/nonexistent/typos';
+  const pr = {
+    state: 'open',
+    draft: false,
+    title: 'ci(repo): add a greeting',
+    body: BODY,
+    user: { login: 'ana' },
+    author_association: 'CONTRIBUTOR',
+    labels: [],
+    head: { sha: 'h' },
+    base: { sha: 'b' },
+  };
+  const client = fakeClient({ pr });
+  const workflow =
+    'on: issues\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi';
+  client.tree = async () => ['package.json'];
+  client.fileAt = async (name, ref) =>
+    name === 'package.json' && ref === 'b'
+      ? '{"dependencies":{"react":"19"}}'
+      : name === '.github/workflows/a.yml' && ref === 'h'
+        ? workflow
+        : null;
+  client.pullFiles = async () => [
+    file('.github/workflows/a.yml', workflow.split('\n'), { status: 'added' }),
+    file('src/App.tsx', ['<div dangerouslySetInnerHTML={x} />']),
+  ];
+  const options = {
+    number: 1,
+    dryRun: true,
+    force: false,
+    repo: 'o/r',
+    version: 'v',
+    log: () => {},
+  };
+  const { findings } = await triagePullRequest({ ...options, client, config: defaults });
+  const found = findings.map(f => f.id);
+  assert.ok(found.includes('react-dangerous-html'));
+  assert.ok(found.includes('workflow-timeout'));
 });

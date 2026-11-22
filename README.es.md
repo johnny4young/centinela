@@ -56,6 +56,9 @@ Las contribuciones de mantenedores se omiten salvo que lleven la etiqueta `triag
 La excepción es `paths.sensitive`, que siempre conserva la base incluida (workflows, lockfiles, `CODEOWNERS`, licencias, política de seguridad, `.npmrc`).
 La tabla de claves está en el [README en inglés](./README.md#configuration).
 
+Centinela detecta el stack desde la rama base (Electron, React, servidor Node, Swift, Rust), activa las reglas de cada paquete y lo nombra en el pie del comentario. Además revisa siempre los workflows modificados.
+Con `rules.custom` puede convertir las reglas de su `AGENTS.md` en chequeos; vea [Stack packs](./README.md#stack-packs) y [Project rules](./README.md#project-rules).
+
 ## Probar un cambio
 
 Ejecútelo contra una pull request real sin publicar nada:
