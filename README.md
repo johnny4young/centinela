@@ -55,25 +55,31 @@ Maintainer contributions are skipped unless they carry the `triage` label. Draft
 `.github/centinela.json` is merged over [src/defaults.json](./src/defaults.json): objects merge key by key, and lists replace the default list.
 The exception is `paths.sensitive`, which always keeps the built-in floor (workflows, lockfiles, `CODEOWNERS`, licenses, security policy, `.npmrc`).
 
-| Key                                                      | Purpose                                                                                |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `maintainers`                                            | Logins whose identity is protected and whose pull requests are skipped                 |
-| `license`                                                | Your license, named when a dependency license is rejected                              |
-| `pullRequest.conventionalTitle`                          | Require a Conventional Commit title                                                    |
-| `pullRequest.sections`                                   | Template sections the description must fill, with their names in each language         |
-| `paths.ui`, `source`, `tests`                            | Globs that decide when screenshots and tests are needed                                |
-| `paths.sensitive`                                        | Extra paths that always need a maintainer                                              |
-| `size`                                                   | Files left out of the size, and the bucket from which a split is suggested             |
-| `language.typos`, `typosExclude`                         | Typo check on added lines                                                              |
-| `language.spanishRegister`                               | `{ "register": "usted" or "tu", "paths": [...] }` flags voseo, and tú in usted copy    |
-| `language.localeParity`                                  | `{ "dir": "src/locales", "languages": ["en", "es"] }` flags keys missing in a language |
-| `stack`                                                  | `"auto"` detects the stack packs below from the base branch; a list forces them        |
-| `rules.workflows`                                        | Check changed workflows for injection, privileged checkouts, pins and timeouts         |
-| `rules.custom`                                           | Your own rules; see [Project rules](#project-rules)                                    |
-| `deps`                                                   | Minimum release age in days and blocked license prefixes                               |
-| `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                        |
-| `links.security`, `links.rules`                          | Repository paths, one string or one per language, linked from the comment              |
-| `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                        |
+| Key                                                      | Purpose                                                                                    |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `maintainers`                                            | Logins whose identity is protected and whose pull requests are skipped                     |
+| `license`                                                | Your license, named when a dependency license is rejected                                  |
+| `pullRequest.conventionalTitle`                          | Require a Conventional Commit title                                                        |
+| `pullRequest.sections`                                   | `"template"` reads them from your pull request template; or a list with names per language |
+| `paths.ui`, `source`, `tests`                            | Globs that decide when screenshots and tests are needed                                    |
+| `paths.sensitive`                                        | Extra paths that always need a maintainer                                                  |
+| `size`                                                   | Files left out of the size, and the bucket from which a split is suggested                 |
+| `language.typos`, `typosExclude`                         | Typo check on added lines                                                                  |
+| `language.spanishRegister`                               | `{ "register": "usted" or "tu", "paths": [...] }` flags voseo, and tú in usted copy        |
+| `language.localeParity`                                  | `{ "dir": "src/locales", "languages": ["en", "es"] }` flags keys missing in a language     |
+| `stack`                                                  | `"auto"` detects the stack packs below from the base branch; a list forces them            |
+| `rules.workflows`                                        | Check changed workflows for injection, privileged checkouts, pins and timeouts             |
+| `rules.custom`                                           | Your own rules; see [Project rules](#project-rules)                                        |
+| `deps`                                                   | Minimum release age in days and blocked license prefixes                                   |
+| `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                            |
+| `links.security`, `links.rules`                          | Repository paths, one string or one per language, linked from the comment                  |
+| `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                            |
+
+## Required sections
+
+By default Centinela reads `.github/pull_request_template.md` from the base branch. A heading whose body prompts the author with an HTML comment is required; checklists and headings such as Screenshots, Notes or Linked issues are optional.
+Common synonyms count: a body with **Verification**, **Checks** or **Evidence** fills a **Testing** section, **Summary** or **Description** fills **What**, and Spanish headings such as **Qué** or **Cómo probar** work too.
+A repository without a template only gets the title check.
 
 ## Stack packs
 

@@ -38,6 +38,9 @@ export function resolveConfig(project = {}) {
   const config = merge(DEFAULTS, project);
   config.paths.sensitive = [...new Set([...SENSITIVE_FLOOR, ...(config.paths.sensitive ?? [])])];
   validateStack(config.stack);
+  const sections = config.pullRequest.sections;
+  if (sections !== 'template' && !Array.isArray(sections))
+    throw new Error('centinela: pullRequest.sections must be "template" or a list of sections');
   config.rules.custom = (config.rules.custom ?? []).map(validateRule);
   const sizes = Object.keys(config.labels.size);
   if (!sizes.includes(config.size.justifyFrom)) {

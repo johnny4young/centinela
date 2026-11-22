@@ -36,19 +36,7 @@
   },
   "pullRequest": {
     "conventionalTitle": true,
-    "sections": [
-      { "id": "what", "names": ["what", "qué", "que"], "label": { "en": "What", "es": "Qué" } },
-      {
-        "id": "why",
-        "names": ["why", "por qué", "por que"],
-        "label": { "en": "Why", "es": "Por qué" }
-      },
-      {
-        "id": "howToTest",
-        "names": ["how to test", "cómo probar", "como probar"],
-        "label": { "en": "How to test", "es": "Cómo probar" }
-      }
-    ]
+    "sections": "template"
   },
   "paths": {
     "ui": ["**/*.tsx", "**/*.jsx", "**/*.vue", "**/*.svelte", "**/*.css", "**/*.scss", "**/*.html"],

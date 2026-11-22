@@ -9,6 +9,7 @@ import { detectLanguage, readApproval, readMarker, reviewKey, sha256 } from './l
 import { dependencyChanges, findTypos, localeGaps } from './lib/enrich.mjs';
 import { createClient } from './lib/github.mjs';
 import { applyStack, detectStack } from './lib/packs.mjs';
+import { loadTemplateSections } from './lib/template.mjs';
 import { isWorkflow } from './lib/workflows.mjs';
 import { renderComment } from './lib/render.mjs';
 
@@ -205,6 +206,12 @@ export async function triagePullRequest({
     legacy: config.rules,
   });
   const { config: effective, rules } = applyStack(config, stack);
+  if (config.pullRequest.sections === 'template') {
+    effective.pullRequest = {
+      ...config.pullRequest,
+      sections: await loadTemplateSections({ client, ref: pr.base.sha, paths: stack.paths }),
+    };
+  }
   // Fetch a bounded number; the rest are reported unread so a maintainer reviews them.
   const workflows = [];
   for (const file of files.filter(f => isWorkflow(f.filename) && f.status !== 'removed')) {

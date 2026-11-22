@@ -85,7 +85,8 @@ export function checkDescription(ctx) {
   if (rules.conventionalTitle && !CONVENTIONAL_TITLE.test(ctx.title))
     results.push(finding('title', 'blocking', { title: ctx.title }));
   const parsed = sections(ctx.body ?? '');
-  const missing = rules.sections.filter(({ names }) => !section(parsed, names));
+  const required = Array.isArray(rules.sections) ? rules.sections : [];
+  const missing = required.filter(({ names }) => !section(parsed, names));
   if (missing.length) {
     results.push(
       finding('description', 'blocking', {
@@ -112,7 +113,10 @@ export function checkEvidence(ctx) {
     results.push(finding('screenshots', 'blocking', { files: uiFiles.map(f => f.filename) }));
   }
   if (type === 'fix' && !ISSUE_LINK.test(body)) {
-    const howTo = ctx.config.pullRequest.sections.find(s => s.id === 'howToTest');
+    const sectionsList = Array.isArray(ctx.config.pullRequest.sections)
+      ? ctx.config.pullRequest.sections
+      : [];
+    const howTo = sectionsList.find(s => s.id === 'howToTest');
     const steps = (howTo ? section(sections(body), howTo.names) : body) ?? '';
     if (!/^\s*(\d+\.|-)\s+\S/m.test(steps)) results.push(finding('reproduction', 'suggestion'));
   }

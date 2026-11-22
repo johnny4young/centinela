@@ -43,6 +43,7 @@ import {
   relevantEvent,
 } from '../src/centinela.mjs';
 import { parseConfig, resolveConfig } from '../src/lib/config.mjs';
+import { KNOWN_SECTIONS, findTemplate, templateSections } from '../src/lib/template.mjs';
 
 const config = parseConfig(
   readFileSync(new URL('./fixtures/electron-monorepo.json', import.meta.url), 'utf8')
@@ -98,15 +99,23 @@ test('review key changes only with what the review depends on', () => {
 });
 
 test('description requires a conventional title and the template sections', () => {
-  assert.deepEqual(checkDescription({ title: 'feat(sales): add a thing', body: BODY, config }), []);
+  const described = resolveConfig({ pullRequest: { sections: KNOWN_SECTIONS } });
   assert.deepEqual(
-    checkDescription({ title: 'feat(sales): agrega', body: BODY.replace('What', 'Qué'), config }),
+    checkDescription({ title: 'feat(sales): add a thing', body: BODY, config: described }),
+    []
+  );
+  assert.deepEqual(
+    checkDescription({
+      title: 'feat(sales): agrega',
+      body: BODY.replace('What', 'Qué'),
+      config: described,
+    }),
     []
   );
   const bad = checkDescription({
     title: 'feat(purchases):\n record it',
     body: '## What\n<!-- x -->',
-    config,
+    config: described,
   });
   assert.deepEqual(ids(bad), ['title:blocking', 'description:blocking']);
   assert.deepEqual(bad[1].params.missing, ['what', 'why', 'howToTest']);
@@ -1179,4 +1188,117 @@ test('security pack rules also scan test files', async () => {
     files: [file('src/__tests__/window.test.ts', ['  sandbox: false,', 'readFileSync(p)'])],
   });
   assert.deepEqual(ids(findings), ['electron-hardening:blocking']);
+});
+
+test('required sections come from the repository pull request template', async () => {
+  const stagewright = [
+    '## Summary',
+    '<!-- One or two sentences. -->',
+    '## Type of change',
+    '- [ ] Bug fix',
+    '## Linked issues',
+    '<!-- Reference issues with #N. -->',
+    '## Verification',
+    '<!-- How did you confirm the change works? -->',
+    '- [ ] `pnpm test` passes',
+    '## Notes for reviewers',
+    '<!-- Anything else. -->',
+  ].join('\n');
+  assert.deepEqual(
+    templateSections(stagewright).map(s => [s.id, s.label.en]),
+    [
+      ['what', 'Summary'],
+      ['howToTest', 'Verification'],
+    ]
+  );
+  // A body may use a synonym of the template heading.
+  const gancho = resolveConfig({
+    pullRequest: { sections: templateSections('## Summary\n<!-- a -->\n## Testing\n<!-- b -->') },
+  });
+  assert.deepEqual(
+    checkDescription({
+      title: 'feat: x',
+      body: '## Summary\nx\n## Verification\nRan it',
+      config: gancho,
+    }),
+    []
+  );
+  assert.deepEqual(
+    checkDescription({
+      title: 'feat: x',
+      body: '## What (v2)\nx\n## Checks\nRan it',
+      config: gancho,
+    }),
+    []
+  );
+  const lingua =
+    '## Summary\n<!-- x -->\n## How was this tested?\n<!-- y -->\n## Checklist\n- [ ] a';
+  const sections = templateSections(lingua);
+  assert.deepEqual(
+    sections.map(s => s.label.en),
+    ['Summary', 'How was this tested?']
+  );
+  const body = '## Summary\nAdds a thing.\n\n## How was this tested?\n1. Ran it';
+  const config = resolveConfig({ pullRequest: { sections } });
+  assert.deepEqual(checkDescription({ title: 'feat: x', body, config }), []);
+  assert.deepEqual(
+    checkDescription({ title: 'feat: x', body: '## Summary\nx', config })[0].params.labels,
+    [{ en: 'How was this tested?', es: 'Cómo probar' }]
+  );
+  // Known headings keep their translations, so a Spanish body still passes.
+  const known = templateSections('## What\n<!-- a -->\n## Why\n<!-- b -->');
+  assert.deepEqual(
+    checkDescription({
+      title: 'feat: x',
+      body: '## Qué\nAlgo\n## Por qué\nPorque',
+      config: resolveConfig({ pullRequest: { sections: known } }),
+    }),
+    []
+  );
+  assert.equal(
+    findTemplate(['README.md', '.github/PULL_REQUEST_TEMPLATE.md']),
+    '.github/PULL_REQUEST_TEMPLATE.md'
+  );
+  assert.equal(findTemplate(['README.md']), null);
+  assert.deepEqual(checkDescription({ title: 'feat: x', body: '', config: defaults }), []);
+  assert.throws(
+    () => resolveConfig({ pullRequest: { sections: 'auto' } }),
+    /pullRequest\.sections/
+  );
+});
+
+test('a pull request review reads the template from the base branch', async () => {
+  process.env.TYPOS_BIN = '/nonexistent/typos';
+  const pr = {
+    state: 'open',
+    draft: false,
+    title: 'docs: fix wording',
+    body: '## Summary\nFixes a typo.',
+    user: { login: 'ana' },
+    author_association: 'CONTRIBUTOR',
+    labels: [],
+    head: { sha: 'h' },
+    base: { sha: 'b' },
+  };
+  const client = fakeClient({ pr });
+  const reads = [];
+  client.tree = async () => ['.github/PULL_REQUEST_TEMPLATE.md'];
+  client.fileAt = async (name, ref) => {
+    reads.push(`${name}@${ref}`);
+    return name === '.github/PULL_REQUEST_TEMPLATE.md'
+      ? '## Summary\n<!-- a -->\n## Verification\n<!-- b -->'
+      : null;
+  };
+  const options = {
+    number: 1,
+    dryRun: true,
+    force: false,
+    repo: 'o/r',
+    version: 'v',
+    log: () => {},
+  };
+  const { findings } = await triagePullRequest({ ...options, client, config: defaults });
+  const description = findings.find(f => f.id === 'description');
+  assert.deepEqual(description.params.labels, [{ en: 'Verification', es: 'Cómo probar' }]);
+  assert.ok(reads.includes('.github/PULL_REQUEST_TEMPLATE.md@b'));
 });

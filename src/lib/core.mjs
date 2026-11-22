@@ -64,7 +64,15 @@ export function sections(body = '') {
 export function section(parsed, names) {
   // Bilingual issue-form headings look like "Steps to reproduce / Pasos para reproducir".
   for (const [heading, content] of parsed) {
-    if (heading.split(' / ').some(part => names.includes(part.trim()))) return content;
+    // Trailing punctuation or a parenthetical never decides a match: "What (v2)" fills "what".
+    const parts = heading.split(' / ').map(part =>
+      part
+        .replace(/\s*\([^)]*\)\s*$/, '')
+        .trim()
+        .replace(/[?:.]+$/, '')
+    );
+    if (parts.some(part => names.some(name => name.replace(/[?:.]+$/, '') === part)))
+      return content;
   }
   return null;
 }
