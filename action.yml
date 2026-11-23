@@ -6,8 +6,8 @@ branding:
   color: orange
 
 # Centinela reads the contribution only as data through the GitHub API. Call it
-# from pull_request_target and issues workflows and never check out PR code in
-# the same job: that job holds a write token.
+# from pull_request_target, issues, issue_comment and schedule workflows and never
+# check out PR code in the same job: that job holds a write token.
 inputs:
   app-client-id:
     description: Client ID of the GitHub App that posts as Centinela. Leave empty to post as github-actions.
@@ -54,6 +54,11 @@ runs:
         tar -xzf "$archive" -C "$RUNNER_TEMP/typos" ./typos
         echo "TYPOS_BIN=$RUNNER_TEMP/typos/typos" >> "$GITHUB_ENV"
 
+    - name: Repository name
+      id: repo
+      shell: bash
+      run: echo "name=${GITHUB_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
     - name: Mint Centinela app token
       id: app
       if: ${{ inputs.app-client-id != '' }}
@@ -61,7 +66,7 @@ runs:
       with:
         client-id: ${{ inputs.app-client-id }}
         private-key: ${{ inputs.app-private-key }}
-        repositories: ${{ github.event.repository.name }}
+        repositories: ${{ steps.repo.outputs.name }}
         permission-contents: read
         permission-issues: write
         permission-pull-requests: write

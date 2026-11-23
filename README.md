@@ -29,9 +29,20 @@ The status fails while either of the first two has items. The `triage: approved`
 On a later review, items it did not report before are marked **new**, and the comment says how many from the last review are resolved.
 A first-time contributor gets a welcome that links your contributing guide: `CONTRIBUTING.md`, `.github/CONTRIBUTING.md` or `docs/CONTRIBUTING.md`, or the path in `links.contributing`.
 
+## Commands and follow-up
+
+The author or a maintainer can comment on a pull request or issue:
+
+- `/centinela recheck` runs the checks again, for example after a dependency is old enough or the template changed.
+- `/centinela help` lists the commands.
+
+Centinela reacts with 👀 when it starts and 👍 when it finishes. Comments from anyone else are ignored.
+
+Once a day it looks at items waiting on their author (`status: waiting-on-author` or `needs-info`). After `lifecycle.remindAfterDays` without activity from the author (14 by default) it posts one reminder in the author's language. Closing is off by default; set `lifecycle.closeAfterDays` to close the item that many days after the reminder, with a message that invites the author to come back. Approved items, items waiting on a maintainer, drafts and maintainer items are never touched.
+
 ## How it stays safe
 
-- It runs on `pull_request_target` and `issues` and never checks out or executes contributed code. It reads the pull request only through the GitHub API.
+- It runs on `pull_request_target`, `issues`, `issue_comment` and a daily `schedule`, and never checks out or executes contributed code. It reads the pull request only through the GitHub API.
 - It reads its config from the base branch, so a pull request cannot change its own rules.
 - When the API returns a truncated diff it fails closed and asks for a maintainer.
 - It reviews an item again only when something it reads changes: a new commit, the title, the description, the opt-in or approval labels, or its rules.
@@ -58,25 +69,26 @@ Maintainer contributions are skipped unless they carry the `triage` label. Draft
 `.github/centinela.json` is merged over [src/defaults.json](./src/defaults.json): objects merge key by key, and lists replace the default list.
 The exception is `paths.sensitive`, which always keeps the built-in floor (workflows, lockfiles, `CODEOWNERS`, licenses, security policy, `.npmrc`).
 
-| Key                                                      | Purpose                                                                                    |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `maintainers`                                            | Logins whose identity is protected and whose pull requests are skipped                     |
-| `license`                                                | Your license, named when a dependency license is rejected                                  |
-| `pullRequest.conventionalTitle`                          | Require a Conventional Commit title                                                        |
-| `pullRequest.sections`                                   | `"template"` reads them from your pull request template; or a list with names per language |
-| `paths.ui`, `source`, `tests`                            | Globs that decide when screenshots and tests are needed                                    |
-| `paths.sensitive`                                        | Extra paths that always need a maintainer                                                  |
-| `size`                                                   | Files left out of the size, and the bucket from which a split is suggested                 |
-| `language.typos`, `typosExclude`                         | Typo check on added lines                                                                  |
-| `language.spanishRegister`                               | `{ "register": "usted" or "tu", "paths": [...] }` flags voseo, and tú in usted copy        |
-| `language.localeParity`                                  | `{ "dir": "src/locales", "languages": ["en", "es"] }` flags keys missing in a language     |
-| `stack`                                                  | `"auto"` detects the stack packs below from the base branch; a list forces them            |
-| `rules.workflows`                                        | Check changed workflows for injection, privileged checkouts, pins and timeouts             |
-| `rules.custom`                                           | Your own rules; see [Project rules](#project-rules)                                        |
-| `deps`                                                   | Minimum release age in days and blocked license prefixes                                   |
-| `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                            |
-| `links.security`, `rules`, `contributing`                | Repository paths, one string or one per language, linked from the comment                  |
-| `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                            |
+| Key                                                      | Purpose                                                                                     |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `maintainers`                                            | Logins whose identity is protected and whose pull requests are skipped                      |
+| `license`                                                | Your license, named when a dependency license is rejected                                   |
+| `pullRequest.conventionalTitle`                          | Require a Conventional Commit title                                                         |
+| `pullRequest.sections`                                   | `"template"` reads them from your pull request template; or a list with names per language  |
+| `paths.ui`, `source`, `tests`                            | Globs that decide when screenshots and tests are needed                                     |
+| `paths.sensitive`                                        | Extra paths that always need a maintainer                                                   |
+| `size`                                                   | Files left out of the size, and the bucket from which a split is suggested                  |
+| `language.typos`, `typosExclude`                         | Typo check on added lines                                                                   |
+| `language.spanishRegister`                               | `{ "register": "usted" or "tu", "paths": [...] }` flags voseo, and tú in usted copy         |
+| `language.localeParity`                                  | `{ "dir": "src/locales", "languages": ["en", "es"] }` flags keys missing in a language      |
+| `stack`                                                  | `"auto"` detects the stack packs below from the base branch; a list forces them             |
+| `rules.workflows`                                        | Check changed workflows for injection, privileged checkouts, pins and timeouts              |
+| `rules.custom`                                           | Your own rules; see [Project rules](#project-rules)                                         |
+| `deps`                                                   | Minimum release age in days and blocked license prefixes                                    |
+| `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                             |
+| `lifecycle.remindAfterDays`, `closeAfterDays`            | Days before the reminder (`null` turns it off) and before closing after it (off by default) |
+| `links.security`, `rules`, `contributing`                | Repository paths, one string or one per language, linked from the comment                   |
+| `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                             |
 
 ## Required sections
 

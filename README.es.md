@@ -29,9 +29,20 @@ El estado falla mientras alguno de los dos primeros grupos tenga puntos. La etiq
 En una revisión posterior, los puntos que no estaban antes se marcan como **nuevo**, y el comentario indica cuántos de la revisión anterior quedaron resueltos.
 Quien contribuye por primera vez recibe una bienvenida con el enlace a su guía de contribución: `CONTRIBUTING.md`, `.github/CONTRIBUTING.md` o `docs/CONTRIBUTING.md`, o la ruta en `links.contributing`.
 
+## Comandos y seguimiento
+
+El autor o un mantenedor pueden comentar en una pull request o un issue:
+
+- `/centinela recheck` ejecuta los chequeos de nuevo, por ejemplo cuando una dependencia ya tiene la antigüedad mínima o cambió la plantilla.
+- `/centinela help` muestra los comandos.
+
+Centinela reacciona con 👀 al empezar y con 👍 al terminar. Los comentarios de cualquier otra persona se ignoran.
+
+Una vez al día revisa lo que espera al autor (`status: waiting-on-author` o `needs-info`). Tras `lifecycle.remindAfterDays` sin actividad del autor (14 por defecto) publica un único recordatorio en su idioma. El cierre está apagado por defecto; con `lifecycle.closeAfterDays` cierra la contribución esos días después del recordatorio, con un mensaje que invita a retomarla. Nunca toca contribuciones aprobadas, que esperan a un mantenedor, borradores ni las de mantenedores.
+
 ## Cómo se mantiene seguro
 
-- Se ejecuta con `pull_request_target` e `issues` y nunca descarga ni ejecuta el código contribuido. Lee la pull request solo mediante la API de GitHub.
+- Se ejecuta con `pull_request_target`, `issues`, `issue_comment` y un `schedule` diario, y nunca descarga ni ejecuta el código contribuido. Lee la pull request solo mediante la API de GitHub.
 - Lee su configuración desde la rama base, así que una pull request no puede cambiar sus propias reglas.
 - Si la API devuelve un diff incompleto, falla de forma segura y pide un mantenedor.
 - Revisa de nuevo solo cuando cambia algo que lee: un commit nuevo, el título, la descripción, las etiquetas de activación o aprobación, o sus reglas.

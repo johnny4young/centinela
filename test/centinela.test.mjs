@@ -45,7 +45,11 @@ import {
   triageIssue,
   triagePullRequest,
   relevantEvent,
+  runCommand,
+  runLifecycle,
 } from '../src/centinela.mjs';
+import { canRun, parseCommand } from '../src/lib/commands.mjs';
+import { lastActivity, lifecycleAction } from '../src/lib/lifecycle.mjs';
 import { parseConfig, resolveConfig } from '../src/lib/config.mjs';
 import {
   KNOWN_SECTIONS,
@@ -877,6 +881,8 @@ test('the example workflow filters the same labels the defaults use', () => {
     assert.match(workflow, new RegExp(`"${label}"`));
   }
   assert.doesNotMatch(workflow, /actions\/checkout/, 'the caller must never check out PR code');
+  assert.match(workflow, /startsWith\(github\.event\.comment\.body, '\/centinela'\)/);
+  assert.match(workflow, /schedule:/);
 });
 
 test('bug titles are recognized by everyday wording in both languages', () => {
@@ -1521,4 +1527,228 @@ test('an approval follows a new head only when the tree and the findings are unc
   });
   assert.deepEqual(status(forged), ['status', 'eee', 'failure']);
   assert.ok(forged.writes.some(w => w[0] === 'remove' && w[1] === 'triage: approved'));
+});
+
+test('commands come from the first line and only the author or a maintainer may run them', () => {
+  assert.equal(parseCommand('/centinela recheck'), 'recheck');
+  assert.equal(parseCommand('  /Centinela RECHECK\nplease'), 'recheck');
+  assert.equal(parseCommand('/centinela'), 'help');
+  assert.equal(parseCommand('/centinela dance'), 'dance');
+  assert.equal(parseCommand('please /centinela recheck'), null);
+  assert.equal(parseCommand('/centinelax recheck'), null);
+  const config = defaults;
+  assert.ok(canRun({ login: 'ana', association: 'NONE', itemAuthor: 'ana', config }));
+  assert.ok(canRun({ login: 'mo', association: 'MEMBER', itemAuthor: 'ana', config }));
+  assert.ok(!canRun({ login: 'eve', association: 'CONTRIBUTOR', itemAuthor: 'ana', config }));
+});
+
+test('comment and schedule events become commands and lifecycle runs', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'centinela-'));
+  const event = path.join(dir, 'event.json');
+  await writeFile(
+    event,
+    JSON.stringify({
+      action: 'created',
+      issue: { number: 7, pull_request: {}, user: { login: 'ana' } },
+      comment: {
+        id: 99,
+        body: '/centinela recheck',
+        user: { login: 'ana', type: 'User' },
+        author_association: 'NONE',
+      },
+    })
+  );
+  const target = parseTarget([], {
+    GITHUB_EVENT_PATH: event,
+    GITHUB_EVENT_NAME: 'issue_comment',
+    GITHUB_SHA: 'base',
+  });
+  assert.equal(target.kind, 'pr');
+  assert.equal(target.number, 7);
+  assert.deepEqual(
+    [target.command.name, target.command.commentId, target.command.itemAuthor],
+    ['recheck', 99, 'ana']
+  );
+  await writeFile(event, JSON.stringify({ schedule: '23 9 * * *' }));
+  assert.equal(
+    parseTarget([], { GITHUB_EVENT_PATH: event, GITHUB_EVENT_NAME: 'schedule' }).kind,
+    'lifecycle'
+  );
+  await rm(dir, { recursive: true });
+});
+
+test('a recheck reviews an unchanged pull request again and help answers only allowed people', async () => {
+  process.env.TYPOS_BIN = '/nonexistent/typos';
+  const pr = {
+    number: 9,
+    state: 'open',
+    draft: false,
+    title: 'docs(readme): fix wording',
+    body: BODY,
+    user: { login: 'ana' },
+    author_association: 'CONTRIBUTOR',
+    labels: [],
+    head: { sha: 'h1' },
+    base: { sha: 'b1' },
+  };
+  const options = {
+    config,
+    number: 9,
+    dryRun: false,
+    force: false,
+    repo: 'o/r',
+    version: 'v1',
+    log: () => {},
+  };
+  const first = fakeClient({ pr });
+  await triagePullRequest({ ...options, client: first });
+  const comments = [
+    { id: 1, user: { type: 'Bot' }, body: first.writes.find(w => w[0] === 'comment')[2] },
+  ];
+  const command = name => ({
+    name,
+    commentId: 5,
+    login: 'ana',
+    association: 'NONE',
+    bot: false,
+    itemAuthor: 'ana',
+    language: 'en',
+  });
+  const withReactions = client => {
+    client.react = async (id, content) => client.writes.push(['react', id, content]);
+    client.comment = async (number, body) => client.writes.push(['reply', number, body]);
+    return client;
+  };
+
+  const recheck = withReactions(fakeClient({ pr, comments }));
+  await runCommand({
+    command: command('recheck'),
+    options: { ...options, client: recheck },
+    kind: 'pr',
+  });
+  assert.deepEqual(recheck.writes[0], ['react', 5, 'eyes']);
+  assert.ok(
+    recheck.writes.some(w => w[0] === 'comment'),
+    'a recheck reviews again'
+  );
+  assert.deepEqual(recheck.writes.at(-1), ['react', 5, '+1']);
+
+  const help = withReactions(fakeClient({ pr, comments }));
+  await runCommand({ command: command('help'), options: { ...options, client: help }, kind: 'pr' });
+  assert.match(help.writes.find(w => w[0] === 'reply')[2], /`\/centinela recheck`/);
+
+  const stranger = withReactions(fakeClient({ pr, comments }));
+  await runCommand({
+    command: { ...command('recheck'), login: 'eve', association: 'CONTRIBUTOR' },
+    options: { ...options, client: stranger },
+    kind: 'pr',
+  });
+  assert.deepEqual(stranger.writes, []);
+});
+
+test('items waiting on their author get one reminder and, if enabled, a polite close', async () => {
+  const day = 86_400_000;
+  const now = Date.parse('2026-12-31T00:00:00Z');
+  const ago = days => new Date(now - days * day).toISOString();
+  const settings = { remindAfterDays: 14, closeAfterDays: 14 };
+  assert.equal(
+    lifecycleAction({ now, activity: now - 13 * day, reminderAt: null, settings }),
+    null
+  );
+  assert.equal(
+    lifecycleAction({ now, activity: now - 14 * day, reminderAt: null, settings }),
+    'remind'
+  );
+  assert.equal(
+    lifecycleAction({ now, activity: now - 30 * day, reminderAt: now - 14 * day, settings }),
+    'close'
+  );
+  assert.equal(
+    lifecycleAction({
+      now,
+      activity: now - 30 * day,
+      reminderAt: now - 14 * day,
+      settings: { ...settings, closeAfterDays: null },
+    }),
+    null
+  );
+  assert.equal(
+    lastActivity({
+      created: ago(40),
+      author: 'ana',
+      timeline: [
+        { event: 'commented', actor: { login: 'centinela[bot]' }, created_at: ago(1) },
+        { event: 'committed', committer: { date: ago(20) } },
+        { event: 'commented', actor: { login: 'ana' }, created_at: ago(25) },
+      ],
+    }),
+    now - 20 * day
+  );
+
+  const item = (number, extra = {}) => ({
+    number,
+    title: 'The export fails',
+    body: 'It fails when I export the list.',
+    user: { login: 'ana' },
+    author_association: 'NONE',
+    created_at: ago(40),
+    labels: [{ name: 'needs-info' }],
+    ...extra,
+  });
+  const timelines = {
+    1: [],
+    2: [
+      {
+        event: 'commented',
+        actor: { login: 'centinela[bot]' },
+        created_at: ago(15),
+        body: '<!-- centinela-reminder -->\nHi',
+      },
+    ],
+    3: [],
+    4: [
+      {
+        event: 'commented',
+        actor: { login: 'centinela[bot]' },
+        created_at: ago(20),
+        body: '<!-- centinela-reminder -->\nHi',
+      },
+      { event: 'reopened', actor: { login: 'mo' }, created_at: ago(2) },
+    ],
+  };
+  const writes = [];
+  const client = {
+    waitingOn: async label =>
+      label === 'needs-info'
+        ? [
+            item(1),
+            item(2, { pull_request: {} }),
+            item(3, { labels: [{ name: 'needs-info' }, { name: 'triage: approved' }] }),
+            item(4),
+          ]
+        : [item(1)],
+    timeline: async number => timelines[number],
+    comment: async (number, body) => writes.push(['comment', number, body]),
+    close: async (number, pull) => writes.push(['close', number, pull]),
+  };
+  const actions = await runLifecycle({
+    client,
+    config: resolveConfig({ lifecycle: { closeAfterDays: 14 } }),
+    dryRun: false,
+    botLogin: 'centinela[bot]',
+    log: () => {},
+    now,
+  });
+  assert.deepEqual(actions, [
+    { number: 1, action: 'remind' },
+    { number: 2, action: 'close' },
+  ]);
+  assert.match(
+    writes[0][2],
+    /^<!-- centinela-reminder -->\nHi @ana, this has been waiting on you for 40 days/
+  );
+  assert.match(writes[0][2], /Without activity in 14 days it will be closed/);
+  assert.deepEqual(writes.at(-1), ['close', 2, true]);
+  assert.match(writes[1][2], /^<!-- centinela-closed -->\nClosing this after 15 days/);
+  assert.throws(() => resolveConfig({ lifecycle: { remindAfterDays: 0 } }), /positive number/);
 });

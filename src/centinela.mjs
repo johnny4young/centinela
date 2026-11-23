@@ -19,9 +19,16 @@ import { applyStack, detectStack } from './lib/packs.mjs';
 import { findContributing, loadTemplateSections } from './lib/template.mjs';
 import { isWorkflow } from './lib/workflows.mjs';
 import { renderComment } from './lib/render.mjs';
+import {
+  MAINTAINER_ASSOCIATIONS,
+  canRun,
+  helpText,
+  knownCommand,
+  parseCommand,
+} from './lib/commands.mjs';
+import { lastActivity, lifecycleAction, lifecycleComment, reminderAt } from './lib/lifecycle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const MAINTAINER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const FIRST_TIMERS = new Set(['FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER']);
 
 /** The welcome for a first-time contributor, linking the configured or detected guide. */
@@ -69,11 +76,35 @@ export function parseTarget(argv, env) {
   // --force replays closed, skipped or unchanged items; only allowed with --dry-run.
   const force = dryRun && argv.includes('--force');
   const manual = { dryRun, force, configFile, action: null, ref: null };
+  if (argv.includes('--lifecycle')) return { kind: 'lifecycle', ...manual };
   if (flag('--pr')) return { kind: 'pr', number: flag('--pr'), ...manual };
   if (flag('--issue')) return { kind: 'issue', number: flag('--issue'), ...manual };
   if (!env.GITHUB_EVENT_PATH)
     throw new Error('centinela: pass --pr <n> or --issue <n>, or run inside GitHub Actions');
   const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
+  if (['schedule', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)) {
+    return { kind: 'lifecycle', dryRun, force: false, configFile, action: null, ref: null };
+  }
+  if (env.GITHUB_EVENT_NAME === 'issue_comment') {
+    return {
+      kind: event.issue.pull_request ? 'pr' : 'issue',
+      number: event.issue.number,
+      dryRun,
+      force: false,
+      configFile,
+      ref: env.GITHUB_SHA ?? null,
+      action: event.action ?? null,
+      command: {
+        name: parseCommand(event.comment?.body),
+        commentId: event.comment?.id,
+        login: event.comment?.user?.login,
+        association: event.comment?.author_association,
+        bot: event.comment?.user?.type === 'Bot',
+        itemAuthor: event.issue.user?.login,
+        language: detectLanguage(event.comment?.body ?? ''),
+      },
+    };
+  }
   const number = event.pull_request?.number ?? event.issue?.number;
   if (!number)
     throw new Error(`centinela: event ${env.GITHUB_EVENT_NAME} has no pull request or issue`);
@@ -168,6 +199,7 @@ export async function triagePullRequest({
   number,
   dryRun,
   force,
+  recheck = false,
   action = null,
   eventHeadSha = null,
   eventLabel = null,
@@ -226,7 +258,7 @@ export async function triagePullRequest({
       approvedSha ?? (carrying ? `tree:${tree}` : ''),
     ],
   });
-  if (existing && readMarker(existing.body) === key && !force)
+  if (existing && readMarker(existing.body) === key && !force && !recheck)
     return log(`#${number} unchanged since the last review`);
 
   const [files, commits] = await Promise.all([
@@ -366,6 +398,7 @@ export async function triageIssue({
   number,
   dryRun,
   force,
+  recheck = false,
   ref = null,
   repo,
   version,
@@ -393,7 +426,7 @@ export async function triageIssue({
     labels: labels.filter(name => name === config.issues.bugLabel),
   });
   const existing = ownComment(await client.comments(number), botLogin);
-  if (existing && readMarker(existing.body) === key && !force)
+  if (existing && readMarker(existing.body) === key && !force && !recheck)
     return log(`#${number} unchanged since the last review`);
 
   const compared = compareFindings(
@@ -434,6 +467,79 @@ export async function triageIssue({
   return { findings };
 }
 
+/**
+ * A `/centinela` command from a comment. Only the author and maintainers are answered; a
+ * recheck reviews the item again even when nothing it reads has changed.
+ */
+export async function runCommand({ command, options, kind }) {
+  const { client, config, dryRun, log } = options;
+  if (!command.name || command.bot) return log('no Centinela command in this comment');
+  if (!canRun({ ...command, config }))
+    return log(`${command.login} may not run Centinela commands here`);
+  const react = content =>
+    dryRun ? log(`react ${content}`) : client.react(command.commentId, content);
+  if (!knownCommand(command.name) || command.name === 'help') {
+    await react(knownCommand(command.name) ? 'eyes' : 'confused');
+    return dryRun
+      ? log(helpText(command.language))
+      : client.comment(options.number, helpText(command.language));
+  }
+  await react('eyes');
+  const triage = kind === 'pr' ? triagePullRequest : triageIssue;
+  const result = await triage({ ...options, recheck: true });
+  await react('+1');
+  return result;
+}
+
+/**
+ * Daily pass over items waiting on their author: one reminder after a quiet period, then an
+ * optional close. Approved, maintainer and skipped items are left alone.
+ */
+export async function runLifecycle({ client, config, dryRun, botLogin, log, now = Date.now() }) {
+  const settings = config.lifecycle;
+  if (!settings.remindAfterDays) return log('lifecycle reminders are off');
+  const waiting = new Map();
+  for (const label of [config.labels.waitingOnAuthor.name, config.labels.needsInfo.name]) {
+    for (const item of await client.waitingOn(label)) waiting.set(item.number, item);
+  }
+  const actions = [];
+  for (const item of waiting.values()) {
+    const labels = item.labels.map(label => (typeof label === 'string' ? label : label.name));
+    const held = [config.overrideLabel, config.labels.needsMaintainer.name].some(name =>
+      labels.includes(name)
+    );
+    const skip = shouldSkip({
+      author: item.user.login,
+      association: item.author_association,
+      labels,
+      draft: item.draft === true,
+      config,
+    });
+    if (held || skip) continue;
+    const timeline = await client.timeline(item.number);
+    const activity = lastActivity({ created: item.created_at, author: item.user.login, timeline });
+    const reminded = reminderAt(timeline, botLogin);
+    const action = lifecycleAction({ now, activity, reminderAt: reminded, settings });
+    if (!action) continue;
+    const days = Math.floor((now - (action === 'close' ? reminded : activity)) / 86_400_000);
+    const body = lifecycleComment(action, detectLanguage(item.title, item.body ?? ''), {
+      author: item.user.login,
+      days,
+      closeAfterDays: settings.closeAfterDays,
+    });
+    actions.push({ number: item.number, action });
+    if (dryRun) {
+      log(`#${item.number} ${action}\n${body}`);
+      continue;
+    }
+    await client.comment(item.number, body);
+    if (action === 'close') await client.close(item.number, Boolean(item.pull_request));
+    log(`#${item.number} ${action}`);
+  }
+  log(`lifecycle: ${waiting.size} waiting on the author, ${actions.length} action(s)`);
+  return actions;
+}
+
 /** Label events matter only for the opt-in, approval and bug labels, never the bot's own. */
 export function relevantEvent(target, config) {
   if (target.action !== 'labeled' && target.action !== 'unlabeled') return true;
@@ -451,15 +557,19 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     file: target.configFile,
     ref: target.ref,
   });
+  const client = createClient({ token, repo, statusContext: config.statusContext });
+  const botLogin =
+    env.CENTINELA_BOT_LOGIN || (env.GITHUB_ACTIONS === 'true' ? 'github-actions[bot]' : null);
+  if (target.kind === 'lifecycle')
+    return runLifecycle({ client, config, dryRun: target.dryRun, botLogin, log });
   if (!relevantEvent(target, config))
     return log(`label ${target.eventLabel} does not affect the review`);
   const options = {
-    client: createClient({ token, repo, statusContext: config.statusContext }),
+    client,
     config,
     version: rulesVersion(config),
     // Inside Actions the identity is always known; dry runs accept any bot.
-    botLogin:
-      env.CENTINELA_BOT_LOGIN || (env.GITHUB_ACTIONS === 'true' ? 'github-actions[bot]' : null),
+    botLogin,
     number: target.number,
     dryRun: target.dryRun,
     action: target.action,
@@ -470,6 +580,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     repo,
     log,
   };
+  if (target.command) return runCommand({ command: target.command, options, kind: target.kind });
   return target.kind === 'pr' ? triagePullRequest(options) : triageIssue(options);
 }
 

@@ -78,6 +78,17 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
       }
       return request('POST', `/{repo}/issues/${number}/comments`, { body: { body } });
     },
+    timeline: number => paginate(`/{repo}/issues/${number}/timeline`, 1000),
+    waitingOn: label =>
+      paginate(`/{repo}/issues?state=open&labels=${encodeURIComponent(label)}`, 500),
+    react: (commentId, content) =>
+      request('POST', `/{repo}/issues/comments/${commentId}/reactions`, { body: { content } }),
+    comment: (number, body) =>
+      request('POST', `/{repo}/issues/${number}/comments`, { body: { body } }),
+    close: (number, pull) =>
+      request('PATCH', `/{repo}/issues/${number}`, {
+        body: pull ? { state: 'closed' } : { state: 'closed', state_reason: 'not_planned' },
+      }),
     setStatus: (sha, state, description) =>
       request('POST', `/{repo}/statuses/${sha}`, {
         body: { state, context: statusContext, description: description.slice(0, 140) },

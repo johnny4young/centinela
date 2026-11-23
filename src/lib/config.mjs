@@ -42,6 +42,11 @@ export function resolveConfig(project = {}) {
   if (sections !== 'template' && !Array.isArray(sections))
     throw new Error('centinela: pullRequest.sections must be "template" or a list of sections');
   config.rules.custom = (config.rules.custom ?? []).map(validateRule);
+  for (const key of ['remindAfterDays', 'closeAfterDays']) {
+    const days = config.lifecycle[key];
+    if (days !== null && !(Number.isInteger(days) && days > 0))
+      throw new Error(`centinela: lifecycle.${key} must be a positive number of days or null`);
+  }
   const sizes = Object.keys(config.labels.size);
   if (!sizes.includes(config.size.justifyFrom)) {
     throw new Error(`centinela: size.justifyFrom must be one of ${sizes.join(', ')}`);

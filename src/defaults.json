@@ -78,6 +78,10 @@
     "minAgeDays": 14,
     "blockedLicenses": ["GPL", "AGPL", "LGPL", "SSPL"]
   },
+  "lifecycle": {
+    "remindAfterDays": 14,
+    "closeAfterDays": null
+  },
   "issues": {
     "productName": null,
     "bugLabel": "bug"
