@@ -24,7 +24,10 @@ Los reportes de error necesitan pasos para reproducirlo, comportamiento esperado
 Los reportes que parecen una vulnerabilidad se dirigen a su política de seguridad.
 
 Los resultados se agrupan en tres: **para avanzar** (el autor lo corrige), **requiere revisión de un mantenedor** y **sugerencias**, que nunca bloquean.
-El estado falla mientras alguno de los dos primeros grupos tenga puntos. La etiqueta `triage: approved` los acepta solo para el commit actual.
+El estado falla mientras alguno de los dos primeros grupos tenga puntos. La etiqueta `triage: approved` los acepta para el contenido actual: sigue valiendo en un commit nuevo con el mismo árbol (un squash o un mensaje reescrito) mientras la revisión no encuentre nada nuevo, y cualquier otro push necesita una aprobación nueva.
+
+En una revisión posterior, los puntos que no estaban antes se marcan como **nuevo**, y el comentario indica cuántos de la revisión anterior quedaron resueltos.
+Quien contribuye por primera vez recibe una bienvenida con el enlace a su guía de contribución: `CONTRIBUTING.md`, `.github/CONTRIBUTING.md` o `docs/CONTRIBUTING.md`, o la ruta en `links.contributing`.
 
 ## Cómo se mantiene seguro
 

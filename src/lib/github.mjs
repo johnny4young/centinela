@@ -53,6 +53,7 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
     pullFiles: number => paginate(`/{repo}/pulls/${number}/files`),
     pullCommits: number => paginate(`/{repo}/pulls/${number}/commits`, 250),
     comments: number => paginate(`/{repo}/issues/${number}/comments`),
+    commitTree: sha => request('GET', `/{repo}/git/commits/${sha}`).then(r => r.data.tree.sha),
     repository: () => request('GET', '/{repo}').then(r => r.data),
     async tree(ref) {
       const { data } = await request('GET', `/{repo}/git/trees/${ref}?recursive=1`);

@@ -142,19 +142,64 @@ export function reviewKey({ rulesVersion, kind, headSha = '', title, body, label
   ).slice(0, 32);
 }
 
-export function markerFor(key, approvedSha = null) {
-  return `<!-- ${MARKER} key=${key}${approvedSha ? ` approved=${approvedSha}` : ''} -->`;
+const MARKER_LINE = new RegExp(`^<!-- ${MARKER} key=([a-f0-9]+)((?: [a-z]+=[a-f0-9,]*)*) -->`);
+
+/** The hidden first line of the comment: review key, approval, approved tree and finding fingerprints. */
+export function markerFor(key, { approved = null, tree = null, seen = [] } = {}) {
+  const fields = [`key=${key}`];
+  if (approved) fields.push(`approved=${approved}`);
+  if (approved && tree) fields.push(`tree=${tree}`);
+  fields.push(`seen=${seen.join(',')}`);
+  return `<!-- ${MARKER} ${fields.join(' ')} -->`;
+}
+
+/** The fields of a Centinela marker, or null when the text does not start with one. */
+export function parseMarker(text = '') {
+  const match = text.match(MARKER_LINE);
+  if (!match) return null;
+  const fields = Object.fromEntries(
+    match[2]
+      .trim()
+      .split(' ')
+      .filter(Boolean)
+      .map(pair => pair.split('='))
+  );
+  return {
+    key: match[1],
+    approved: fields.approved || null,
+    tree: fields.tree || null,
+    seen: fields.seen === undefined ? null : fields.seen.split(',').filter(Boolean),
+  };
 }
 
 export function readMarker(text = '') {
-  return (
-    text.match(new RegExp(`^<!-- ${MARKER} key=([a-f0-9]+)(?: approved=[a-f0-9]+)? -->`))?.[1] ??
-    null
-  );
+  return parseMarker(text)?.key ?? null;
 }
 
 export function readApproval(text = '') {
-  return (
-    text.match(new RegExp(`^<!-- ${MARKER} key=[a-f0-9]+ approved=([a-f0-9]+) -->`))?.[1] ?? null
-  );
+  return parseMarker(text)?.approved ?? null;
+}
+
+const MAX_SEEN = 100;
+
+/** A short id for a finding that survives line shifts: the rule, the file and its subject. */
+export function fingerprint(finding) {
+  const subject = finding.params?.sha ?? finding.params?.name ?? finding.params?.key ?? '';
+  return sha256([finding.id, finding.file ?? '', subject].join('\0')).slice(0, 8);
+}
+
+/**
+ * Compares this review with the previous one: marks findings it did not have and counts the
+ * ones that are gone. Without a previous list nothing is new.
+ */
+export function compareFindings(findings, previousSeen) {
+  const seen = [...new Set(findings.map(fingerprint))].slice(0, MAX_SEEN);
+  if (!previousSeen) return { findings, seen, resolved: 0 };
+  const before = new Set(previousSeen);
+  const now = new Set(findings.map(fingerprint));
+  return {
+    findings: findings.map(f => (before.has(fingerprint(f)) ? f : { ...f, isNew: true })),
+    seen,
+    resolved: previousSeen.filter(id => !now.has(id)).length,
+  };
 }

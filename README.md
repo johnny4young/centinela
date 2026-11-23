@@ -24,7 +24,10 @@ Bug reports need steps to reproduce, expected and actual behavior, the version a
 Reports that look like a vulnerability are pointed to your security policy.
 
 Findings fall into three groups: **to move forward** (the author fixes it), **needs a maintainer review**, and **suggestions** that never block.
-The status fails while either of the first two has items. The `triage: approved` label accepts them for the current commit only.
+The status fails while either of the first two has items. The `triage: approved` label accepts them for the current content: it follows a new commit with an identical tree (a squash or a reworded message) as long as the review finds nothing new, and any other push needs a new approval.
+
+On a later review, items it did not report before are marked **new**, and the comment says how many from the last review are resolved.
+A first-time contributor gets a welcome that links your contributing guide: `CONTRIBUTING.md`, `.github/CONTRIBUTING.md` or `docs/CONTRIBUTING.md`, or the path in `links.contributing`.
 
 ## How it stays safe
 
@@ -72,7 +75,7 @@ The exception is `paths.sensitive`, which always keeps the built-in floor (workf
 | `rules.custom`                                           | Your own rules; see [Project rules](#project-rules)                                        |
 | `deps`                                                   | Minimum release age in days and blocked license prefixes                                   |
 | `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                            |
-| `links.security`, `links.rules`                          | Repository paths, one string or one per language, linked from the comment                  |
+| `links.security`, `rules`, `contributing`                | Repository paths, one string or one per language, linked from the comment                  |
 | `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                            |
 
 ## Required sections

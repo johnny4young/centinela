@@ -96,6 +96,17 @@ export function findTemplate(paths) {
   return null;
 }
 
+const CONTRIBUTING = ['CONTRIBUTING.md', '.github/CONTRIBUTING.md', 'docs/CONTRIBUTING.md'];
+
+/** The contributing guide in a repository's tracked paths, matched case-insensitively. */
+export function findContributing(paths = []) {
+  const byLower = new Map(paths.map(p => [p.toLowerCase(), p]));
+  for (const candidate of CONTRIBUTING) {
+    if (byLower.has(candidate.toLowerCase())) return byLower.get(candidate.toLowerCase());
+  }
+  return null;
+}
+
 /** Required sections from the base branch template, or [] when the repository has none. */
 export async function loadTemplateSections({ client, ref, paths }) {
   const tracked = paths?.length ? paths : await client.tree(ref);

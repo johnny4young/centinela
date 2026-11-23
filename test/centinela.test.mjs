@@ -16,8 +16,12 @@ import {
 } from '../src/lib/checks.mjs';
 import {
   addedLines,
+  compareFindings,
   detectLanguage,
+  fingerprint,
+  markerFor,
   matcher,
+  parseMarker,
   readMarker,
   reviewKey,
   sections,
@@ -43,7 +47,12 @@ import {
   relevantEvent,
 } from '../src/centinela.mjs';
 import { parseConfig, resolveConfig } from '../src/lib/config.mjs';
-import { KNOWN_SECTIONS, findTemplate, templateSections } from '../src/lib/template.mjs';
+import {
+  KNOWN_SECTIONS,
+  findContributing,
+  findTemplate,
+  templateSections,
+} from '../src/lib/template.mjs';
 
 const config = parseConfig(
   readFileSync(new URL('./fixtures/electron-monorepo.json', import.meta.url), 'utf8')
@@ -490,6 +499,7 @@ function fakeClient({ pr, issue, comments = [] }) {
     pullCommits: async () => [],
     fileAt: async () => null,
     tree: async () => [],
+    commitTree: async sha => `f${sha}`,
     ensureLabel: async label => writes.push(['label', label.name]),
     upsertComment: async (number, existing, body) =>
       writes.push(['comment', existing?.id ?? null, body]),
@@ -772,7 +782,7 @@ test('an approval covers only the head it was given on', async () => {
     ['status', 'aaa', 'success']
   );
   const comment = approved.writes.find(w => w[0] === 'comment')[2];
-  assert.match(comment, /approved=aaa -->/);
+  assert.match(comment, /approved=aaa tree=faaa /);
   const previous = [{ id: 1, user: { type: 'Bot' }, body: comment }];
 
   // Any later run keeps it on the same head, even if a cancelled run never removed the label.
@@ -1326,4 +1336,189 @@ test('heading parsing stays linear on hostile pull request bodies', async () => 
     config: resolveConfig({ pullRequest: { sections: KNOWN_SECTIONS } }),
   });
   assert.ok(performance.now() - started < 500, 'parsing a hostile body must stay fast');
+});
+
+test('the marker remembers findings, and the comment marks new and resolved ones', () => {
+  const marker = markerFor('ab12', { approved: 'aaa', tree: 'f00', seen: ['0a1b2c3d'] });
+  assert.deepEqual(parseMarker(`${marker}\nbody`), {
+    key: 'ab12',
+    approved: 'aaa',
+    tree: 'f00',
+    seen: ['0a1b2c3d'],
+  });
+  // Markers from earlier versions still parse; they carry no memory.
+  assert.deepEqual(parseMarker('<!-- centinela key=ab12 approved=aaa -->'), {
+    key: 'ab12',
+    approved: 'aaa',
+    tree: null,
+    seen: null,
+  });
+  assert.equal(parseMarker('> <!-- centinela key=ab12 -->'), null);
+  assert.equal(readMarker(markerFor('ab12')), 'ab12');
+
+  const tests = { id: 'tests', severity: 'blocking', params: { lines: 40 } };
+  const typo = { id: 'typo', severity: 'suggestion', params: {}, file: 'a.md', line: 3 };
+  assert.equal(fingerprint(typo), fingerprint({ ...typo, line: 9 }), 'line shifts keep the id');
+  const first = compareFindings([tests, typo], null);
+  assert.ok(
+    first.findings.every(f => !f.isNew),
+    'the first review has nothing new'
+  );
+  const title = { id: 'title', severity: 'blocking', params: { title: 'x' } };
+  const second = compareFindings([title, typo], first.seen);
+  assert.equal(second.resolved, 1);
+  assert.deepEqual(
+    second.findings.map(f => f.isNew === true),
+    [true, false]
+  );
+
+  const render = language =>
+    renderComment({
+      kind: 'pr',
+      repo: 'o/r',
+      config: defaults,
+      author: 'ana',
+      findings: second.findings,
+      language,
+      key: 'ab12',
+      rulesVersion: 'v1',
+      approved: false,
+      seen: second.seen,
+      resolved: second.resolved,
+      welcome: { link: '.github/CONTRIBUTING.md' },
+    });
+  const en = render('en');
+  assert.match(en, new RegExp(`^<!-- centinela key=ab12 seen=${second.seen.join(',')} -->`));
+  assert.match(en, /One item from the last review is resolved\./);
+  assert.match(en, /- \*\*new\*\* · The title/);
+  assert.doesNotMatch(en, /\*\*new\*\* · `a\.md:3`/);
+  assert.match(
+    en,
+    /\[contributing guide\]\(https:\/\/github\.com\/o\/r\/blob\/HEAD\/\.github\/CONTRIBUTING\.md\)/
+  );
+  const es = render('es');
+  assert.match(es, /Un punto de la revisión anterior quedó resuelto\./);
+  assert.match(es, /- \*\*nuevo\*\* · El título/);
+  assert.match(es, /Le damos la bienvenida/);
+  assert.equal(findContributing(['README.md', 'docs/contributing.md']), 'docs/contributing.md');
+  assert.equal(findContributing(['README.md']), null);
+});
+
+test('first-time contributors are welcomed with the contributing guide', async () => {
+  process.env.TYPOS_BIN = '/nonexistent/typos';
+  const issue = {
+    number: 4,
+    state: 'open',
+    title: 'The app crashes when exporting sales',
+    body: 'It crashes every time I export the sales list to CSV.',
+    user: { login: 'ana' },
+    author_association: 'FIRST_TIME_CONTRIBUTOR',
+    labels: [],
+  };
+  const client = fakeClient({ issue });
+  client.tree = async () => ['CONTRIBUTING.md'];
+  client.repository = async () => ({ default_branch: 'main' });
+  const { findings } = await triageIssue({
+    client,
+    config: defaults,
+    number: 4,
+    dryRun: false,
+    force: false,
+    repo: 'o/r',
+    version: 'v1',
+    log: () => {},
+  });
+  assert.ok(findings.length, 'an incomplete bug report gets a comment');
+  const body = client.writes.find(w => w[0] === 'comment')[2];
+  assert.match(body, /Welcome, and thanks for your first contribution here!/);
+  assert.match(body, /blob\/HEAD\/CONTRIBUTING\.md/);
+
+  const regular = fakeClient({ issue: { ...issue, author_association: 'CONTRIBUTOR' } });
+  await triageIssue({
+    client: regular,
+    config: defaults,
+    number: 4,
+    dryRun: false,
+    force: false,
+    repo: 'o/r',
+    version: 'v1',
+    log: () => {},
+  });
+  assert.doesNotMatch(regular.writes.find(w => w[0] === 'comment')[2], /Welcome/);
+});
+
+test('an approval follows a new head only when the tree and the findings are unchanged', async () => {
+  process.env.TYPOS_BIN = '/nonexistent/typos';
+  const pr = {
+    state: 'open',
+    draft: false,
+    title: 'docs(readme): fix wording',
+    body: BODY,
+    user: { login: 'ana' },
+    author_association: 'CONTRIBUTOR',
+    labels: [{ name: 'triage: approved' }],
+    head: { sha: 'aaa' },
+    base: { sha: 'b' },
+  };
+  const options = {
+    config,
+    number: 1,
+    dryRun: false,
+    force: false,
+    repo: 'o/r',
+    version: 'v1',
+    log: () => {},
+  };
+  const run = async ({ prState = pr, extra = {}, comments = [], trees = {}, files, commits }) => {
+    const client = fakeClient({ pr: prState, comments });
+    client.pullFiles = async () => files ?? [file('.github/workflows/ci.yml')];
+    if (commits) client.pullCommits = async () => commits;
+    client.commitTree = async sha => trees[sha] ?? `f${sha}`;
+    await triagePullRequest({ ...options, client, ...extra });
+    return client;
+  };
+  const approved = await run({
+    extra: { action: 'labeled', eventLabel: 'triage: approved', eventHeadSha: 'aaa' },
+    trees: { aaa: '5a3e' },
+  });
+  const previous = [
+    { id: 1, user: { type: 'Bot' }, body: approved.writes.find(w => w[0] === 'comment')[2] },
+  ];
+  const status = client => client.writes.find(w => w[0] === 'status');
+
+  // A squash keeps the content: the approval moves to the new head.
+  const squashed = await run({
+    prState: { ...pr, head: { sha: 'ccc' } },
+    comments: previous,
+    trees: { ccc: '5a3e' },
+  });
+  assert.deepEqual(status(squashed), ['status', 'ccc', 'success']);
+  assert.ok(!squashed.writes.some(w => w[0] === 'remove' && w[1] === 'triage: approved'));
+  assert.match(squashed.writes.find(w => w[0] === 'comment')[2], /approved=ccc tree=5a3e /);
+
+  // New content needs a new approval.
+  const changed = await run({
+    prState: { ...pr, head: { sha: 'ddd' } },
+    comments: previous,
+    trees: { ddd: '07e4' },
+  });
+  assert.deepEqual(status(changed), ['status', 'ddd', 'failure']);
+  assert.ok(changed.writes.some(w => w[0] === 'remove' && w[1] === 'triage: approved'));
+
+  // Same content, but a rewritten commit now carries a maintainer identity.
+  const forged = await run({
+    prState: { ...pr, head: { sha: 'eee' } },
+    comments: previous,
+    trees: { eee: '5a3e' },
+    commits: [
+      {
+        sha: 'eee',
+        author: { login: 'johnny4young' },
+        committer: { login: 'johnny4young' },
+        commit: { message: 'docs: x', verification: { verified: false } },
+      },
+    ],
+  });
+  assert.deepEqual(status(forged), ['status', 'eee', 'failure']);
+  assert.ok(forged.writes.some(w => w[0] === 'remove' && w[1] === 'triage: approved'));
 });

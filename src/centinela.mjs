@@ -5,16 +5,31 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkIssue, checkPullRequest, sizeOf } from './lib/checks.mjs';
 import { parseConfig } from './lib/config.mjs';
-import { detectLanguage, readApproval, readMarker, reviewKey, sha256 } from './lib/core.mjs';
+import {
+  compareFindings,
+  detectLanguage,
+  parseMarker,
+  readMarker,
+  reviewKey,
+  sha256,
+} from './lib/core.mjs';
 import { dependencyChanges, findTypos, localeGaps } from './lib/enrich.mjs';
 import { createClient } from './lib/github.mjs';
 import { applyStack, detectStack } from './lib/packs.mjs';
-import { loadTemplateSections } from './lib/template.mjs';
+import { findContributing, loadTemplateSections } from './lib/template.mjs';
 import { isWorkflow } from './lib/workflows.mjs';
 import { renderComment } from './lib/render.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MAINTAINER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+const FIRST_TIMERS = new Set(['FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER']);
+
+/** The welcome for a first-time contributor, linking the configured or detected guide. */
+export async function welcomeFor({ association, config, paths }) {
+  if (!FIRST_TIMERS.has(association)) return null;
+  if (config.links.contributing) return { link: config.links.contributing };
+  return { link: findContributing(await paths()) };
+}
 export const CONFIG_PATH = '.github/centinela.json';
 
 /**
@@ -103,7 +118,8 @@ export function ownComment(comments, botLogin = null) {
 
 /**
  * The head SHA a maintainer approval covers, or null. Applying the label approves the head
- * the event carried; later runs keep it only while the PR still points at that head.
+ * the event carried; later runs keep it only while the PR still points at that head. A new
+ * head with the same tree is handled by carryApproval once its findings are known.
  */
 export function approvalFor({
   labels,
@@ -119,6 +135,16 @@ export function approvalFor({
     return headSha;
   }
   return previous === headSha ? headSha : null;
+}
+
+/**
+ * An approval moves to a new head only when the content is identical (same tree, so a squash
+ * or reworded commit) and the review found nothing it had not found when it was approved.
+ */
+export function carryApproval({ previous, tree, findings }) {
+  if (!previous?.approved || !previous.tree || !previous.seen || tree !== previous.tree)
+    return false;
+  return !findings.some(f => f.severity !== 'suggestion' && f.isNew);
 }
 
 export function outcome(findings, approved) {
@@ -171,16 +197,22 @@ export async function triagePullRequest({
   }
 
   const existing = ownComment(await client.comments(number), botLogin);
-  const approvedSha = approvalFor({
+  const previous = parseMarker(existing?.body);
+  let approvedSha = approvalFor({
     labels,
     config,
     headSha: pr.head.sha,
-    previous: readApproval(existing?.body),
+    previous: previous?.approved ?? null,
     action,
     eventHeadSha,
     eventLabel,
   });
-  if (labels.includes(config.overrideLabel) && !approvedSha && !dryRun) {
+  const labeled = labels.includes(config.overrideLabel);
+  // The approved tree is recorded, and compared when the head moved under an approval.
+  const carry = labeled && !approvedSha && Boolean(previous?.approved && previous.tree);
+  const tree = approvedSha || carry ? await client.commitTree(pr.head.sha) : null;
+  const carrying = carry && tree === previous.tree;
+  if (labeled && !approvedSha && !carrying && !dryRun) {
     await client.removeLabel(number, config.overrideLabel);
   }
   const key = reviewKey({
@@ -189,7 +221,10 @@ export async function triagePullRequest({
     headSha: pr.head.sha,
     title: pr.title,
     body: pr.body,
-    labels: [...labels.filter(name => name === config.optInLabel), approvedSha ?? ''],
+    labels: [
+      ...labels.filter(name => name === config.optInLabel),
+      approvedSha ?? (carrying ? `tree:${tree}` : ''),
+    ],
   });
   if (existing && readMarker(existing.body) === key && !force)
     return log(`#${number} unchanged since the last review`);
@@ -231,26 +266,39 @@ export async function triagePullRequest({
   ]);
   if (typos === null) log('typos binary not found; spelling check skipped');
 
-  const findings = checkPullRequest({
-    totals: { files: pr.changed_files, commits: pr.commits },
-    title: pr.title,
-    body: pr.body ?? '',
-    author: pr.user.login,
-    files,
-    commits: commits.map(c => ({
-      sha: c.sha,
-      authorLogin: c.author?.login ?? null,
-      committerLogin: c.committer?.login ?? null,
-      verified: c.commit.verification?.verified === true,
-      message: c.commit.message,
-    })),
-    config: effective,
-    rules,
-    workflows,
-    repo,
-    localeGaps: gaps,
-    dependencies,
-    typos: typos ?? [],
+  const compared = compareFindings(
+    checkPullRequest({
+      totals: { files: pr.changed_files, commits: pr.commits },
+      title: pr.title,
+      body: pr.body ?? '',
+      author: pr.user.login,
+      files,
+      commits: commits.map(c => ({
+        sha: c.sha,
+        authorLogin: c.author?.login ?? null,
+        committerLogin: c.committer?.login ?? null,
+        verified: c.commit.verification?.verified === true,
+        message: c.commit.message,
+      })),
+      config: effective,
+      rules,
+      workflows,
+      repo,
+      localeGaps: gaps,
+      dependencies,
+      typos: typos ?? [],
+    }),
+    previous?.seen ?? null
+  );
+  const { findings } = compared;
+  if (carrying) {
+    if (carryApproval({ previous, tree, findings })) approvedSha = pr.head.sha;
+    else if (!dryRun) await client.removeLabel(number, config.overrideLabel);
+  }
+  const welcome = await welcomeFor({
+    association: pr.author_association,
+    config,
+    paths: async () => (stack.paths?.length ? stack.paths : client.tree(pr.base.sha)),
   });
   const approved = approvedSha !== null;
   const result = outcome(findings, approved);
@@ -266,6 +314,10 @@ export async function triagePullRequest({
     rulesVersion: version,
     approved,
     approvedSha,
+    tree: approved ? tree : null,
+    seen: compared.seen,
+    resolved: compared.resolved,
+    welcome,
   });
   const size = sizeOf(files, config);
   const description =
@@ -314,6 +366,7 @@ export async function triageIssue({
   number,
   dryRun,
   force,
+  ref = null,
   repo,
   version,
   botLogin = null,
@@ -343,7 +396,17 @@ export async function triageIssue({
   if (existing && readMarker(existing.body) === key && !force)
     return log(`#${number} unchanged since the last review`);
 
-  const findings = checkIssue({ title: issue.title, body: issue.body ?? '', labels, config });
+  const compared = compareFindings(
+    checkIssue({ title: issue.title, body: issue.body ?? '', labels, config }),
+    parseMarker(existing?.body)?.seen ?? null
+  );
+  const { findings } = compared;
+  const welcome = await welcomeFor({
+    association: issue.author_association,
+    config,
+    paths: async () =>
+      client.tree(ref ?? (await client.repository()).default_branch).catch(() => []),
+  });
   const body = renderComment({
     kind: 'issue',
     repo,
@@ -354,6 +417,9 @@ export async function triageIssue({
     key,
     rulesVersion: version,
     approved: false,
+    seen: compared.seen,
+    resolved: compared.resolved,
+    welcome,
   });
   if (dryRun) {
     log(body);
@@ -400,6 +466,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     eventHeadSha: target.eventHeadSha,
     eventLabel: target.eventLabel,
     force: target.force,
+    ref: target.ref,
     repo,
     log,
   };

@@ -242,6 +242,11 @@ const TEXT = {
     clean: 'Everything looks good to the automated checks. A maintainer will review it soon.',
     cleanIssue: 'It has everything we need. A maintainer will look at it soon.',
     approved: 'A maintainer approved the open items.',
+    welcome: link =>
+      `Welcome, and thanks for your first contribution here!${link ? ` The [contributing guide](${link}) explains how we work.` : ''}`,
+    resolved: count =>
+      `${count === 1 ? 'One item' : `${count} items`} from the last review ${count === 1 ? 'is' : 'are'} resolved.`,
+    isNew: 'new',
     rules: 'rules',
     footer: pr =>
       `${pr ? 'Pushing a new commit or editing the description runs the checks again.' : 'Editing the issue runs the checks again.'} If something here looks wrong, reply below and a maintainer will take a look.`,
@@ -256,6 +261,11 @@ const TEXT = {
     clean: 'Todo está en orden según los chequeos automáticos. Un mantenedor la revisará pronto.',
     cleanIssue: 'Tiene todo lo necesario. Un mantenedor lo revisará pronto.',
     approved: 'Un mantenedor aprobó los puntos pendientes.',
+    welcome: link =>
+      `¡Le damos la bienvenida y gracias por su primera contribución aquí!${link ? ` La [guía de contribución](${link}) explica cómo trabajamos.` : ''}`,
+    resolved: count =>
+      `${count === 1 ? 'Un punto' : `${count} puntos`} de la revisión anterior ${count === 1 ? 'quedó resuelto' : 'quedaron resueltos'}.`,
+    isNew: 'nuevo',
     rules: 'reglas',
     footer: pr =>
       `${pr ? 'Al subir un commit nuevo o editar la descripción, los chequeos se ejecutan de nuevo.' : 'Al editar el issue, los chequeos se ejecutan de nuevo.'} Si algo aquí parece incorrecto, responda abajo y un mantenedor lo revisará.`,
@@ -272,15 +282,18 @@ function lines(items, language, ctx) {
         ? custom
         : (custom[language] ?? custom.en)
       : MESSAGES[language][item.id](item.params, ctx);
-    const group = seen.get(text) ?? { item, locations: [] };
+    const group = seen.get(text) ?? { item, locations: [], isNew: false };
+    group.isNew ||= item.isNew === true;
     if (item.file) group.locations.push(item.line ? `${item.file}:${item.line}` : item.file);
     seen.set(text, group);
   }
-  return [...seen.entries()].map(([text, { locations }]) => {
-    if (!locations.length) return `- ${text}`;
+  const tag = TEXT[language].isNew;
+  return [...seen.entries()].map(([text, { locations, isNew }]) => {
+    const flag = isNew ? `**${tag}** · ` : '';
+    if (!locations.length) return `- ${flag}${text}`;
     const shown = locations.slice(0, 5).map(code).join(', ');
     const more = locations.length > 5 ? ` (+${locations.length - 5})` : '';
-    return `- ${shown}${more}: ${text}`;
+    return `- ${flag}${shown}${more}: ${text}`;
   });
 }
 
@@ -297,6 +310,10 @@ export function renderComment({
   rulesVersion,
   approved,
   approvedSha,
+  tree = null,
+  seen = [],
+  resolved = 0,
+  welcome = null,
   stack = [],
 }) {
   const text = TEXT[language];
@@ -312,10 +329,15 @@ export function renderComment({
   };
   const pr = kind === 'pr';
   const out = [
-    markerFor(key, approvedSha),
+    markerFor(key, { approved: approvedSha, tree, seen }),
     pr ? text.thanksPr(author) : text.thanksIssue(author),
     '',
   ];
+  if (welcome) {
+    const link = linkFor(welcome.link, language);
+    out.push(text.welcome(link && (/^https?:\/\//.test(link) ? link : url(link))), '');
+  }
+  if (resolved) out.push(text.resolved(resolved), '');
   if (!findings.length) out.push(pr ? text.clean : text.cleanIssue, '');
   if (approved) out.push(`> ${text.approved}`, '');
   for (const severity of ['blocking', 'maintainer', 'suggestion']) {
