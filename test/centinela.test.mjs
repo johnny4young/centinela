@@ -139,7 +139,19 @@ test('description requires a conventional title and the template sections', () =
     body: '## What\n<!-- x -->',
     config: described,
   });
-  assert.deepEqual(ids(bad), ['title:blocking', 'description:blocking']);
+  assert.deepEqual(ids(bad), ['title-lines:blocking', 'description:blocking']);
+  assert.equal(bad[0].params.title, 'feat(purchases): record it');
+  const wrapped = {
+    title: 'feat(orders): print a\n purchase order',
+    body: BODY,
+    config: described,
+  };
+  assert.deepEqual(ids(checkDescription(wrapped)), ['title-lines:blocking']);
+  assert.deepEqual(ids(checkDescription({ ...wrapped, title: 'Print a\npurchase order' })), [
+    'title-lines:blocking',
+    'title:blocking',
+  ]);
+  assert.deepEqual(checkDescription({ ...wrapped, title: 'feat(orders): print\n' }), []);
   assert.deepEqual(bad[1].params.missing, ['what', 'why', 'howToTest']);
   const custom = resolveConfig({
     pullRequest: {
