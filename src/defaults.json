@@ -1,4 +1,5 @@
 {
+  "extends": null,
   "maintainers": [],
   "skipAuthors": ["dependabot[bot]", "renovate[bot]", "github-actions[bot]", "release-please[bot]"],
   "optInLabel": "triage",
@@ -8,6 +9,7 @@
   "labels": {
     "waitingOnAuthor": { "name": "status: waiting-on-author", "color": "fbca04" },
     "needsMaintainer": { "name": "status: needs-maintainer", "color": "d93f0b" },
+    "readyForMaintainer": { "name": "status: ready-for-maintainer", "color": "0e8a16" },
     "needsInfo": { "name": "needs-info", "color": "c5def5" },
     "aiReview": { "name": "centinela: ai-review", "color": "8b5cf6" },
     "size": {
@@ -61,11 +63,13 @@
       "**/Tests/**",
       "e2e/**"
     ],
+    "generated": ["**/migrations/meta/**", "**/__snapshots__/**", "**/*.snap"],
     "sensitive": []
   },
   "language": {
     "typos": true,
     "typosExclude": [],
+    "typosIgnoreWords": [],
     "spanishRegister": null,
     "localeParity": null
   },
@@ -73,7 +77,16 @@
   "rules": {
     "electron": false,
     "workflows": true,
+    "ui": false,
+    "comments": false,
     "custom": []
+  },
+  "hygiene": {
+    "checkConflicts": true,
+    "maxBehindCommits": null,
+    "migrations": "auto",
+    "checkOverlap": true,
+    "checkCi": true
   },
   "deps": {
     "minAgeDays": 14,
@@ -82,11 +95,34 @@
   "ai": {
     "model": "claude-opus-5-5",
     "effort": "xhigh",
+    "fastModel": "claude-sonnet-5-5",
+    "fastEffort": "medium",
+    "verifierModel": "claude-sonnet-5-5",
+    "autoReview": "tiered",
+    "deepFromSize": "L",
+    "deepPaths": [],
+    "agentic": true,
+    "maxToolSteps": 6,
+    "verify": true,
+    "promptCaching": true,
     "maxInputTokens": 150000,
     "maxFileTokens": 60000,
     "maxRelatedTokens": 20000,
     "rules": ["AGENTS.md", "CLAUDE.md"],
     "inline": true
+  },
+  "learnings": {
+    "enabled": true,
+    "localPath": ".github/centinela/learnings.json",
+    "shared": null,
+    "shareScope": "public-only",
+    "retireThreshold": 0.4,
+    "retireMinSamples": 5,
+    "weeklyPr": false
+  },
+  "conversation": {
+    "enabled": true,
+    "model": "claude-sonnet-5-5"
   },
   "lifecycle": {
     "remindAfterDays": 14,
@@ -94,7 +130,12 @@
   },
   "issues": {
     "productName": null,
-    "bugLabel": "bug"
+    "bugLabel": "bug",
+    "aiTriage": true,
+    "aiModel": "claude-sonnet-5-5",
+    "autoLabel": true,
+    "detectDuplicates": true,
+    "detectFixedInMain": true
   },
   "links": {
     "security": null,

@@ -34,11 +34,20 @@ Quien contribuye por primera vez recibe una bienvenida con el enlace a su guía 
 El autor o un mantenedor pueden comentar en una pull request o un issue:
 
 - `/centinela recheck` ejecuta los chequeos de nuevo, por ejemplo cuando una dependencia ya tiene la antigüedad mínima o cambió la plantilla.
+- `/centinela review` pide a Claude una revisión agéntica profunda (solo mantenedores).
+- `/centinela triage` ejecuta triage con IA sobre el issue: duplicados, ya resuelto en `main` y guía de contribución (solo mantenedores).
+- `/centinela learn` cosecha revisiones recientes y abre o actualiza la PR de aprendizajes (solo mantenedores).
 - `/centinela help` muestra los comandos.
 
-Centinela reacciona con 👀 al empezar y con 👍 al terminar. Los comentarios de cualquier otra persona se ignoran.
+Responder a un hilo de Centinela o mencionar `@centinela` contesta dudas con base en las reglas del proyecto y registra descartes para el autoaprendizaje. Centinela reacciona con 👀 al empezar y con 👍 al terminar.
 
-## Revisión con IA
+## Revisión con IA, Triage de Issues y Autoaprendizaje
+
+- **Revisión agéntica en dos niveles (`ai.autoReview: "tiered"`):** corre una revisión rápida automática en pull requests externas listas y escala a revisión agéntica profunda con herramientas de solo lectura vía API de GitHub (`search_code`, `read_file`, `list_dir`, `list_open_prs`) + pasada verificadora (critic) en PRs grandes, rutas críticas o bajo demanda. Usa *prompt caching*.
+- **Higiene de PR:** detecta conflictos de merge, ramas atrasadas, colisiones de migraciones SQL secuenciales, commits solapados entre PRs abiertas y fallos de CI, alternando entre `status: waiting-on-author` y `status: ready-for-maintainer`.
+- **Gestión inteligente de Issues (`issues.aiTriage: true`):** distingue reportes técnicos con `archivo:línea` sin bloquearlos con formularios de usuario final, aplica etiquetas automáticas, detecta duplicados o bugs ya resueltos en `main` y redacta una guía breve cuando alguien ofrece abrir una PR.
+- **Autoaprendizaje multiproyecto en 3 capas (`learnings`):** fusiona reglas globales compartidas (`<shared>/learnings/global.json`), reglas del stack activo (`<shared>/learnings/stacks/<stack>.json`) y reglas locales (`.github/centinela/learnings.json`). Clasifica cada hallazgo (`global`, `stack` o `repo`) con aislamiento de privacidad (`shareScope: "public-only"`), retira reglas ruidosas y promueve patrones repetidos a reglas determinísticas.
+- **Flota multiproyecto y ejecución opt-in:** use el workflow reusable ([reusable-centinela.yml](./.github/workflows/reusable-centinela.yml)), herencia con `"extends"`, `npm run init -- --maintainer <login> --shared <owner>/centinela-memory@main --write`, la plantilla aislada de Nivel 2 ([examples/centinela-execute.yml](./examples/centinela-execute.yml)) y `npm run eval` para medir precisión y recall.
 
 Un mantenedor aplica la etiqueta `centinela: ai-review` a una pull request, o comenta `/centinela review`, para que Claude haga una revisión profunda: primero congelamientos, fugas de memoria y rendimiento; después errores y casos borde, seguridad, parches que esconden un problema, desvíos de sus reglas escritas, pruebas que faltan o no prueban nada, y duplicación. Lee el diff, la versión completa de los archivos modificados, los archivos sin cambios que estos importan (imports relativos y `@/`) y las reglas del proyecto. Los hallazgos que caen en una línea modificada se publican como comentarios sobre esa línea, en una revisión que solo comenta y nunca pide cambios, con una sugerencia que se aplica con un clic cuando el arreglo es una edición pequeña de esas líneas; el resto, con un resumen, va en un comentario aparte en el idioma del autor. Centinela quita la etiqueta al terminar, así que volver a aplicarla después de un commit nuevo pide otra revisión; con el comentario, `--again` revisa el mismo commit otra vez.
 
@@ -61,7 +70,15 @@ Una vez al día también da una primera revisión a las contribuciones abiertas 
 
 ## Instalación
 
-1. Copie [examples/centinela.yml](./examples/centinela.yml) en `.github/workflows/centinela.yml`.
+Para agregar Centinela a otro repositorio en un solo paso desde una copia local de Centinela:
+
+```bash
+npm run init -- --dir ../<repo> --extends <owner>/centinela-memory/base.json@main --write
+```
+
+O configúrelo manualmente:
+
+1. Copie [examples/centinela.yml](./examples/centinela.yml) en `.github/workflows/centinela.yml` (o llame al workflow reusable [reusable-centinela.yml](./.github/workflows/reusable-centinela.yml)).
 2. Agregue `.github/centinela.json` con lo propio de su proyecto. Todas las claves son opcionales; vea [Configuración](#configuración).
 3. Opcional, para publicar con el nombre y el avatar de Centinela: instale la GitHub App de Centinela en el repositorio y guarde sus credenciales.
 

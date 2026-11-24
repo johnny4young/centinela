@@ -34,11 +34,20 @@ A first-time contributor gets a welcome that links your contributing guide: `CON
 The author or a maintainer can comment on a pull request or issue:
 
 - `/centinela recheck` runs the checks again, for example after a dependency is old enough or the template changed.
+- `/centinela review` asks Claude for a deep agentic review (maintainers only).
+- `/centinela triage` runs AI issue triage: duplicates, already-fixed checks and contribution direction (maintainers only).
+- `/centinela learn` harvests recent maintainer reviews and opens/updates a learnings PR (maintainers only).
 - `/centinela help` lists the commands.
 
-Centinela reacts with 👀 when it starts and 👍 when it finishes. Comments from anyone else are ignored.
+Replying to a Centinela review thread or mentioning `@centinela` answers questions grounded in your rules and records dismissals for self-learning. Centinela reacts with 👀 when it starts and 👍 when it finishes.
 
-## AI review
+## AI review, Smart Issue Triage and Self-Learning
+
+- **Cost-tiered agentic AI review (`ai.autoReview: "tiered"`):** runs a fast review automatically on ready external pull requests, and upgrades to deep Opus agentic review (with read-only GitHub API exploration tools `search_code`, `read_file`, `list_dir`, `list_open_prs` + a critic verifier pass) on large PRs, critical paths, or on demand via `centinela: ai-review` / `/centinela review`. Prompt caching cuts repeat token costs.
+- **PR hygiene:** detects merge conflicts, stale branches, sequential SQL migration collisions (e.g. `0102` vs `main` at `0108`), overlapping commits across open PRs, and failing CI checks, flipping between `status: waiting-on-author` and `status: ready-for-maintainer`.
+- **Smart Issue Manager (`issues.aiTriage: true`):** recognizes engineering code-level bug reports without blocking them on end-user forms, auto-labels issues, flags duplicates and bugs already fixed by a recent merged PR, and writes a contribution brief when someone offers a PR.
+- **3-tier multi-project self-learning (`learnings`):** merges shared global rules (`<shared>/learnings/global.json`), active stack rules (`<shared>/learnings/stacks/<stack>.json`), and local repo rules (`.github/centinela/learnings.json`). Harvests maintainer review comments and reactions, routes candidates by scope (`global` / `stack` / `repo`) with strict privacy isolation (`shareScope: "public-only"`), retires noisy rules, and promotes repeated patterns to deterministic rules. See [examples/centinela-memory/learnings/global.json](./examples/centinela-memory/learnings/global.json).
+- **Fleet onboarding & Tier 2 execution:** use the reusable workflow ([reusable-centinela.yml](./.github/workflows/reusable-centinela.yml)), config `"extends"`, `npm run init -- --maintainer <login> --shared <owner>/centinela-memory@main --write`, and the isolated opt-in Tier 2 template ([examples/centinela-execute.yml](./examples/centinela-execute.yml)). Run `npm run eval` to verify precision and recall against historical fixtures.
 
 A maintainer applies the `centinela: ai-review` label to a pull request, or comments `/centinela review`, to have Claude do a deep review: freezes, memory leaks and performance first, then bugs and edge cases, security, workarounds that hide a problem, departures from your written rules, missing or hollow tests, and duplication. It reads the diff, the full new version of the changed files, the unchanged files they import (relative and `@/` imports) and your project rules. Findings that sit on a changed line are posted as review comments on that line, in a review that only comments and never requests changes, with a one-click suggestion when the fix is a small edit of those lines; the rest, with a summary, go in a separate comment in the author's language. Centinela removes the label when it finishes, so applying it again after a new commit asks for another review; with the comment, `--again` reviews the same commit once more.
 
@@ -70,7 +79,15 @@ Once a day it also gives a first review to open contributions it never saw, such
 
 ## Setup
 
-1. Copy [examples/centinela.yml](./examples/centinela.yml) to `.github/workflows/centinela.yml`.
+To onboard another repository in one step from a Centinela checkout:
+
+```bash
+npm run init -- --dir ../<repo> --extends <owner>/centinela-memory/base.json@main --write
+```
+
+Or set it up manually:
+
+1. Copy [examples/centinela.yml](./examples/centinela.yml) to `.github/workflows/centinela.yml` (or call [reusable-centinela.yml](./.github/workflows/reusable-centinela.yml)).
 2. Add `.github/centinela.json` with what is specific to your project. Every key is optional; see [Configuration](#configuration).
 3. Optional, to post with the Centinela name and avatar: install the Centinela GitHub App on the repository and set its credentials.
 

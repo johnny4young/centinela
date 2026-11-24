@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "id": "go-context-propagation",
+      "scope": "stack",
+      "stacks": ["go"],
+      "paths": ["**/*.go"],
+      "category": "freeze",
+      "severity": "maintainer",
+      "rule": "Always pass request context to DB queries and outbound HTTP calls; never use context.Background() inside an active handler.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    }
+  ],
+  "suppressions": [],
+  "glossary": {}
+}

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "id": "no-internal-comment-refs",
+      "scope": "global",
+      "stacks": [],
+      "paths": [],
+      "category": "maintainability",
+      "severity": "suggestion",
+      "rule": "Never put internal planning IDs, ticket numbers, or decision tags (e.g. 'owner decision D1') inside source comments; state only the technical constraint.",
+      "pattern": "\\/\\/.*\\b(?:owner\\s+decision\\s+D\\d+|sprint\\s+\\d+)\\b",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "no-hollow-substring-assertions",
+      "scope": "global",
+      "stacks": [],
+      "paths": ["**/*.test.*", "**/*.spec.*", "**/*_test.go", "**/*Tests.swift"],
+      "category": "tests",
+      "severity": "maintainer",
+      "rule": "Test assertions on rendered HTML or text must target specific elements or structured values, never short substrings that match unrelated CSS or boilerplate.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "no-left-accent-bars",
+      "scope": "global",
+      "stacks": [],
+      "paths": ["**/*.tsx", "**/*.jsx", "**/*.css", "**/*.scss", "**/*.swift"],
+      "category": "convention",
+      "severity": "suggestion",
+      "rule": "Never add vertical left accent bars on cards, rows, callouts or selected items; convey emphasis with background tint, icon, font weight or full border.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    }
+  ],
+  "suppressions": [],
+  "glossary": {}
+}

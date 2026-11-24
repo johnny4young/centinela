@@ -33,6 +33,16 @@ export function merge(base, override) {
   return out;
 }
 
+export function parseRemoteRef(spec) {
+  if (typeof spec !== 'string' || !spec.trim()) return null;
+  const [left, ref = 'main'] = spec.trim().split('@');
+  const parts = left.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  const repo = `${parts[0]}/${parts[1]}`;
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return null;
+  return { repo, path: parts.slice(2).join('/'), ref: ref || 'main' };
+}
+
 export function resolveConfig(project = {}) {
   if (!isObject(project)) throw new Error('centinela: the config must be a JSON object');
   const config = merge(DEFAULTS, project);
@@ -42,8 +52,14 @@ export function resolveConfig(project = {}) {
   if (sections !== 'template' && !Array.isArray(sections))
     throw new Error('centinela: pullRequest.sections must be "template" or a list of sections');
   config.rules.custom = (config.rules.custom ?? []).map(validateRule);
-  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(config.ai.effort))
-    throw new Error('centinela: ai.effort must be low, medium, high, xhigh or max');
+  for (const key of ['effort', 'fastEffort']) {
+    if (config.ai[key] && !['low', 'medium', 'high', 'xhigh', 'max'].includes(config.ai[key]))
+      throw new Error(`centinela: ai.${key} must be low, medium, high, xhigh or max`);
+  }
+  if (!['off', 'tiered', 'always'].includes(config.ai.autoReview))
+    throw new Error('centinela: ai.autoReview must be off, tiered or always');
+  if (!(Number.isInteger(config.ai.maxToolSteps) && config.ai.maxToolSteps >= 0))
+    throw new Error('centinela: ai.maxToolSteps must be zero or a positive number');
   if (!(Number.isInteger(config.ai.maxInputTokens) && config.ai.maxInputTokens > 0))
     throw new Error('centinela: ai.maxInputTokens must be a positive number');
   for (const key of ['maxFileTokens', 'maxRelatedTokens']) {
@@ -52,6 +68,12 @@ export function resolveConfig(project = {}) {
   }
   if (!Array.isArray(config.ai.rules) || !config.ai.rules.every(p => typeof p === 'string'))
     throw new Error('centinela: ai.rules must be a list of repository paths');
+  if (!['public-only', 'all', 'off'].includes(config.learnings.shareScope))
+    throw new Error('centinela: learnings.shareScope must be public-only, all or off');
+  if (config.learnings.shared && !parseRemoteRef(config.learnings.shared))
+    throw new Error('centinela: learnings.shared must look like owner/repo[@ref]');
+  if (config.extends && !parseRemoteRef(config.extends))
+    throw new Error('centinela: extends must look like owner/repo/path.json[@ref]');
   for (const key of ['remindAfterDays', 'closeAfterDays']) {
     const days = config.lifecycle[key];
     if (days !== null && !(Number.isInteger(days) && days > 0))
@@ -60,6 +82,9 @@ export function resolveConfig(project = {}) {
   const sizes = Object.keys(config.labels.size);
   if (!sizes.includes(config.size.justifyFrom)) {
     throw new Error(`centinela: size.justifyFrom must be one of ${sizes.join(', ')}`);
+  }
+  if (!sizes.includes(config.ai.deepFromSize)) {
+    throw new Error(`centinela: ai.deepFromSize must be one of ${sizes.join(', ')}`);
   }
   return config;
 }

@@ -108,6 +108,7 @@ export const PACKS = {
       },
       { id: 'swift-nonisolated-unsafe', severity: 'maintainer', pattern: /nonisolated\(unsafe\)/ },
       { id: 'swift-main-sync', severity: 'maintainer', pattern: /DispatchQueue\.main\.sync\b/ },
+      { id: 'swift-force-try', severity: 'maintainer', pattern: /\btry!\s/ },
       {
         id: 'swift-sleep',
         severity: 'suggestion',
@@ -119,6 +120,30 @@ export const PACKS = {
         when: ({ paths }) => paths.includes('project.yml'),
         paths: ['**/*.xcodeproj/**'],
         tests: true,
+      },
+    ],
+  },
+  go: {
+    name: 'Go',
+    detect: ({ paths }) => paths.includes('go.mod'),
+    paths: {
+      source: ['**/*.go'],
+      tests: ['**/*_test.go'],
+      sensitive: ['go.mod', 'go.sum'],
+    },
+    rules: [
+      {
+        id: 'go-http-default-client',
+        severity: 'suggestion',
+        paths: ['**/*.go'],
+        pattern: /\bhttp\.(Get|Post|PostForm|Head|DefaultClient)\b/,
+      },
+      {
+        id: 'go-sql-concat',
+        tests: true,
+        severity: 'maintainer',
+        paths: ['**/*.go'],
+        pattern: /\.(Query|QueryRow|Exec)(Context)?\s*\([^)]*fmt\.Sprintf\b/,
       },
     ],
   },
@@ -135,6 +160,46 @@ export const PACKS = {
       },
     ],
   },
+  shell: {
+    name: 'Shell',
+    detect: ({ paths }) =>
+      paths.some(p => /^[^/]+\.sh$/.test(p)) &&
+      !paths.includes('package.json') &&
+      !paths.includes('go.mod') &&
+      !paths.includes('Cargo.toml'),
+    paths: {
+      source: ['**/*.sh', 'bin/**'],
+    },
+    rules: [
+      {
+        id: 'shell-eval',
+        tests: true,
+        severity: 'maintainer',
+        paths: ['**/*.sh', 'bin/**'],
+        pattern: /(?:^|[;&|]\s*)eval\s+/,
+      },
+    ],
+  },
+};
+
+export const EXTRA_RULES = {
+  ui: [
+    {
+      id: 'ui-left-accent-bar',
+      severity: 'suggestion',
+      paths: ['**/*.tsx', '**/*.jsx', '**/*.css', '**/*.scss', '**/*.swift'],
+      pattern:
+        /\bborder-(?:l|s)-(?:2|4|8)\b|\bborder-(?:left|inline-start)\s*:\s*[2-6]px\b|\.overlay\s*\(\s*alignment:\s*\.leading\s*\)/,
+    },
+  ],
+  comments: [
+    {
+      id: 'internal-comment-ref',
+      severity: 'suggestion',
+      pattern:
+        /\/\/.*\b(?:owner\s+decision\s+D\d+|sprint\s+\d+|[A-Z]{2,6}-\d{2,5})\b/i,
+    },
+  ],
 };
 
 /** The package.json files worth reading: the root and workspace packages, not fixtures. */
@@ -200,6 +265,8 @@ export function applyStack(config, stack) {
       if (!rule.when || rule.when({ paths: stack.paths ?? [] })) rules.push(rule);
     }
   }
+  if (config.rules?.ui) rules.push(...EXTRA_RULES.ui);
+  if (config.rules?.comments) rules.push(...EXTRA_RULES.comments);
   return { config: { ...config, paths }, rules };
 }
 

@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "id": "ts-no-unsafe-casts-or-suppressions",
+      "scope": "stack",
+      "stacks": ["typescript"],
+      "paths": ["**/*.ts", "**/*.tsx", "**/*.mts"],
+      "category": "hack",
+      "severity": "maintainer",
+      "rule": "Avoid @ts-ignore, @ts-nocheck, explicit any, and double casts (as unknown as T) to silence type errors; narrow or validate the data instead.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "ts-validate-external-boundaries",
+      "scope": "stack",
+      "stacks": ["typescript"],
+      "paths": ["**/*.ts", "**/*.tsx", "**/*.mts"],
+      "category": "security",
+      "severity": "maintainer",
+      "rule": "Validate untrusted JSON, IPC payloads, and API inputs at runtime with a schema instead of trusting TypeScript type assertions alone.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "ts-exhaustive-discriminated-unions",
+      "scope": "stack",
+      "stacks": ["typescript"],
+      "paths": ["**/*.ts", "**/*.tsx", "**/*.mts"],
+      "category": "correctness",
+      "severity": "suggestion",
+      "rule": "Handle all variants of discriminated unions exhaustively so adding a new status or event type surfaces missing branches at compile time.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    }
+  ],
+  "suppressions": [],
+  "glossary": {}
+}

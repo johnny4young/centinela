@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "id": "swift-detached-task-lifecycle",
+      "scope": "stack",
+      "stacks": ["swift"],
+      "paths": ["**/*.swift"],
+      "category": "memory",
+      "severity": "maintainer",
+      "rule": "Never leave fire-and-forget Task { } blocks in views or services without tracking/cancelling handles on teardown or checking Task.isCancelled before mutating state.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "swift-write-before-state",
+      "scope": "stack",
+      "stacks": ["swift"],
+      "paths": ["**/*.swift"],
+      "category": "correctness",
+      "severity": "maintainer",
+      "rule": "Never record in-memory state as saved before the underlying disk/SQLite write is confirmed.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    }
+  ],
+  "suppressions": [],
+  "glossary": {}
+}

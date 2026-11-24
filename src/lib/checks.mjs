@@ -189,9 +189,16 @@ export function checkSensitive(ctx) {
     .map(file => file.filename);
   if (touched.length) results.push(finding('sensitive-paths', 'maintainer', { files: touched }));
 
-  // Fail closed: content the API did not return was never scanned, generated or not.
+  // Fail closed on unread files, except non-sensitive generated metadata (e.g. migration snapshots).
+  const isGenerated = matcher(ctx.config.paths.generated ?? []);
   const unread = ctx.files
-    .filter(file => !file.patch && file.status !== 'removed' && !BINARY.test(file.filename))
+    .filter(
+      file =>
+        !file.patch &&
+        file.status !== 'removed' &&
+        !BINARY.test(file.filename) &&
+        !(isGenerated(file.filename) && !isSensitive(file.filename))
+    )
     .map(file => file.filename);
   const files = ctx.totals?.files > ctx.files.length ? [ctx.files.length, ctx.totals.files] : null;
   const commitCount = ctx.commits?.length ?? 0;
@@ -336,6 +343,19 @@ const ACTUAL = ['actual behavior', 'comportamiento actual', 'actual'];
 const VERSION = ['version', 'versión', 'app version', 'versión de la app'];
 const PLATFORM = ['operating system', 'sistema operativo', 'platform', 'plataforma', 'os'];
 
+const CODE_REF_LINE = /[\w./-]+\.(?:[cm]?[jt]sx?|swift|go|rs|py|sql|sh):\d+/;
+
+/** Engineering bug reports cite source locations directly and do not need end-user OS/version forms. */
+export function isCodeBugReport(title = '', body = '') {
+  if (body.trim().length < 120) return false;
+  const hasCodeRef = CODE_REF_LINE.test(body);
+  const hasStructuredAnalysis = /^##\s+(where|impact|root cause|suggested direction|context)\b/im.test(
+    body
+  );
+  const conventionalFix = /^fix(\([\w./-]+\))?:/i.test(title.trim());
+  return hasCodeRef && (hasStructuredAnalysis || conventionalFix);
+}
+
 export function checkIssue(ctx) {
   const results = [];
   const product = ctx.config.issues.productName?.toLowerCase();
@@ -347,12 +367,14 @@ export function checkIssue(ctx) {
   if (text.match(SECURITY)) results.push(finding('security-report', 'suggestion'));
 
   const isBug =
-    ctx.labels.includes(ctx.config.issues.bugLabel) || ctx.title.match(BUG_TITLE) !== null;
+    ctx.labels.includes(ctx.config.issues.bugLabel) ||
+    ctx.title.match(BUG_TITLE) !== null ||
+    /^fix(\([\w./-]+\))?:/i.test(ctx.title.trim());
   if (body.trim().length < 30) {
     results.push(finding('issue-empty', 'blocking'));
     return results;
   }
-  if (!isBug) return results;
+  if (!isBug || isCodeBugReport(ctx.title, body)) return results;
 
   const parsed = sections(body);
   const hasList = /^\s*\d+\.\s+\S/m.test(body);

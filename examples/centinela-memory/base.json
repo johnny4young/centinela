@@ -1,0 +1,16 @@
+{
+  "maintainers": ["johnny4young"],
+  "rules": {
+    "ui": true,
+    "comments": true
+  },
+  "ai": {
+    "autoReview": "tiered"
+  },
+  "learnings": {
+    "enabled": true,
+    "shared": "johnny4young/centinela-memory@main",
+    "shareScope": "public-only",
+    "weeklyPr": true
+  }
+}

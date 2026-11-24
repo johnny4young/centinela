@@ -1,0 +1,142 @@
+[
+  {
+    "id": "puntovivo-525-multiline-and-screenshots",
+    "kind": "pr",
+    "number": 525,
+    "packs": ["electron", "react"],
+    "title": "feat(orders): print a\n purchase order for the supplier",
+    "body": "## What\nAdds order print.\n## Why\nSuppliers need a printout.\n## How to test\n1. Print an order.",
+    "files": [
+      {
+        "filename": "apps/web/src/features/orders/OrderDetailsModal.tsx",
+        "status": "modified",
+        "additions": 20,
+        "deletions": 2,
+        "patch": "@@ -1,0 +1,2 @@\n+export const printBtn = true;\n"
+      },
+      {
+        "filename": "apps/web/src/features/orders/orderPrinter.test.ts",
+        "status": "added",
+        "additions": 40,
+        "deletions": 0,
+        "patch": "@@ -1,0 +1,1 @@\n+test('prints', () => {});\n"
+      }
+    ],
+    "expect": {
+      "mustFind": ["title-lines", "screenshots"],
+      "mustNotFind": ["title", "tests"]
+    }
+  },
+  {
+    "id": "puntovivo-526-migration-collision-overlap-and-snapshot",
+    "kind": "pr",
+    "number": 526,
+    "packs": ["electron", "react", "node-server"],
+    "config": {
+      "rules": { "comments": true, "ui": true }
+    },
+    "title": "feat(purchases): record the receiving document",
+    "body": "## What\nAdds document upload.\n## Why\nKeep paper evidence.\n## How to test\n1. Upload file.\n![shot](https://github.com/user-attachments/assets/1)",
+    "basePaths": [
+      "packages/server/src/db/migrations/0107_foo.sql",
+      "packages/server/src/db/migrations/0108_bar.sql"
+    ],
+    "commits": [
+      {
+        "sha": "aaa1111",
+        "message": "feat(payables): consolidate several purchases into one supplier invoice"
+      },
+      {
+        "sha": "bbb2222",
+        "message": "feat(purchases): record the receiving document"
+      }
+    ],
+    "openPulls": [
+      {
+        "number": 527,
+        "title": "feat(payables): consolidate several purchases into one supplier invoice"
+      }
+    ],
+    "files": [
+      {
+        "filename": "packages/server/src/db/migrations/0102_purchase_documents.sql",
+        "status": "added",
+        "additions": 30,
+        "deletions": 0,
+        "patch": "@@ -1,0 +1,2 @@\n+CREATE TABLE IF NOT EXISTS purchase_documents (id TEXT);\n"
+      },
+      {
+        "filename": "packages/server/src/db/migrations/meta/0102_snapshot.json",
+        "status": "added",
+        "additions": 10000,
+        "deletions": 0
+      },
+      {
+        "filename": "packages/server/src/application/purchases/doc.ts",
+        "status": "added",
+        "additions": 10,
+        "deletions": 0,
+        "patch": "@@ -1,0 +1,2 @@\n+// owner decision D1: keep one upload per purchase\n+export const ok = true;\n"
+      },
+      {
+        "filename": "packages/server/src/__tests__/doc.test.ts",
+        "status": "added",
+        "additions": 10,
+        "deletions": 0,
+        "patch": "@@ -1,0 +1,1 @@\n+test('ok', () => {});\n"
+      }
+    ],
+    "expect": {
+      "mustFind": ["migration-collision", "pr-overlap", "internal-comment-ref"],
+      "mustNotFind": ["incomplete-diff"]
+    }
+  },
+  {
+    "id": "puntovivo-501-engineering-code-bug-issue",
+    "kind": "issue",
+    "title": "fix(products): duplicate barcodes resolve to an arbitrary catalog entry",
+    "body": "## Summary\n\n`products.lookupByBarcode` can resolve a packaging barcode to an arbitrary product.\n\n## Where\n\n- `packages/server/src/db/schema/products.ts:257-261` — non-unique index.\n- `packages/server/src/trpc/routers/products/queries.ts:566-577` — uses `.get()` without `ORDER BY`.\n\n## Impact\n\nTwo catalog entries sharing a code make the scanner add the wrong item to the cart.",
+    "expect": {
+      "mustFind": [],
+      "mustNotFind": ["issue-incomplete", "issue-empty", "issue-media"]
+    }
+  },
+  {
+    "id": "fleet-go-and-ui-rules",
+    "kind": "pr",
+    "number": 12,
+    "packs": ["go"],
+    "config": {
+      "rules": { "ui": true }
+    },
+    "title": "feat(api): add webhook fetcher",
+    "body": "## What\nAdds fetcher.\n## Why\nNeeded.\n## How to test\n1. Run go test.\n![img](https://github.com/user-attachments/assets/2)",
+    "files": [
+      {
+        "filename": "internal/fetcher/client.go",
+        "status": "added",
+        "additions": 10,
+        "deletions": 0,
+        "patch": "@@ -1,0 +1,3 @@\n+resp, err := http.Get(url)\n+db.Query(fmt.Sprintf(\"SELECT * FROM t WHERE id=%s\", id))\n"
+      },
+      {
+        "filename": "internal/fetcher/client_test.go",
+        "status": "added",
+        "additions": 5,
+        "deletions": 0,
+        "patch": "@@ -1,0 +1,1 @@\n+func TestClient(t *testing.T) {}\n"
+      },
+      {
+        "filename": "web/src/Card.tsx",
+        "status": "modified",
+        "additions": 2,
+        "deletions": 0,
+        "patch": "@@ -1,0 +1,1 @@\n+export const Card = () => <div className=\"border-l-4 border-blue-500\" />;\n"
+      }
+    ],
+    "expect": {
+      "mustFind": ["go-http-default-client", "go-sql-concat", "ui-left-accent-bar"],
+      "mustNotFind": ["tests"]
+    }
+  }
+]

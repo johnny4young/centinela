@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "id": "web-ui-downscale-client-images",
+      "scope": "stack",
+      "stacks": ["react"],
+      "paths": ["**/*.tsx", "**/*.jsx", "**/*.ts"],
+      "category": "performance",
+      "severity": "maintainer",
+      "rule": "Downscale large user-uploaded images on the client (e.g. createImageBitmap + canvas, ~1600 px long side, WebP/JPEG ~0.8) before encoding or uploading; leave PDFs unchanged.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "web-ui-handle-conflict-and-refresh",
+      "scope": "stack",
+      "stacks": ["react"],
+      "paths": ["**/*.tsx", "**/*.jsx"],
+      "category": "correctness",
+      "severity": "suggestion",
+      "rule": "Handle explicit server CONFLICT errors with a localized message and refresh stale view state instead of showing a generic failure toast.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "web-ui-no-filler-copy",
+      "scope": "stack",
+      "stacks": ["react"],
+      "paths": ["**/*.tsx", "**/*.jsx", "**/locales/**/*.json"],
+      "category": "convention",
+      "severity": "suggestion",
+      "rule": "Avoid filler taglines, helper text and redundant secondary labels; let layout and clear control labels carry the screen.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "web-ui-a11y-and-async-cleanup",
+      "scope": "stack",
+      "stacks": ["react"],
+      "paths": ["**/*.tsx", "**/*.jsx"],
+      "category": "correctness",
+      "severity": "suggestion",
+      "rule": "Guard async effects against stale responses on unmount/param changes and keep interactive controls keyboard-accessible with explicit accessible names.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    }
+  ],
+  "suppressions": [],
+  "glossary": {}
+}

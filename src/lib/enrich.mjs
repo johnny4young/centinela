@@ -136,14 +136,50 @@ export async function dependencyChanges({
   return results;
 }
 
+const SPANISH_COMMON_TYPO_FP = new Set([
+  'foto',
+  'fotos',
+  'precio',
+  'precios',
+  'numero',
+  'fecha',
+  'caja',
+  'venta',
+  'ventas',
+  'compra',
+  'compras',
+  'producto',
+  'productos',
+  'cliente',
+  'clientes',
+  'factura',
+  'remision',
+  'orden',
+  'pedido',
+  'total',
+  'cambio',
+  'efectivo',
+  'credito',
+  'debito',
+  'bodega',
+  'sucursal',
+  'usuario',
+]);
+
 /** Run typos over the added lines only, mapping results back to the PR's line numbers. */
 export async function findTypos({
   files,
   exclude = [],
+  ignoreWords = [],
+  spanishEnabled = false,
   binary = process.env.TYPOS_BIN || 'typos',
   required = false,
 }) {
   const skip = matcher([...LOCKFILES, '**/*.svg', ...exclude]);
+  const ignored = new Set([
+    ...ignoreWords.map(w => String(w).toLowerCase()),
+    ...(spanishEnabled ? SPANISH_COMMON_TYPO_FP : []),
+  ]);
   const dir = await mkdtemp(path.join(tmpdir(), 'centinela-typos-'));
   const map = new Map();
   try {
@@ -176,7 +212,7 @@ export async function findTypos({
       .split('\n')
       .filter(Boolean)
       .map(line => JSON.parse(line))
-      .filter(entry => entry.type === 'typo')
+      .filter(entry => entry.type === 'typo' && !ignored.has(String(entry.typo).toLowerCase()))
       .map(entry => {
         const file = entry.path.replace(/^\.\//, '');
         const original = map.get(file)?.[entry.line_num - 1];

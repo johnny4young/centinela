@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "id": "sqlite-blob-not-base64",
+      "scope": "stack",
+      "stacks": ["node-server"],
+      "paths": ["**/db/**", "**/schema/**", "**/application/**"],
+      "category": "performance",
+      "severity": "maintainer",
+      "rule": "Store binary attachments (images, PDFs) in SQLite as blob(..., { mode: 'buffer' }), never as base64 text, and compress large client photos before upload.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "verify-mime-magic-bytes",
+      "scope": "stack",
+      "stacks": ["node-server"],
+      "paths": ["**/upload*", "**/document*", "**/attachment*", "**/media*"],
+      "category": "security",
+      "severity": "suggestion",
+      "rule": "Verify uploaded file magic bytes (%PDF, PNG, JPEG, RIFF..WEBP) against the declared MIME type instead of trusting client headers.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "unique-check-inside-tx",
+      "scope": "stack",
+      "stacks": ["node-server"],
+      "paths": ["**/application/**", "**/services/**", "**/routers/**"],
+      "category": "correctness",
+      "severity": "maintainer",
+      "rule": "Run existence/uniqueness checks inside the write transaction and map SQLite/SQL unique constraint violations to a clean CONFLICT error.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    }
+  ],
+  "suppressions": [],
+  "glossary": {}
+}

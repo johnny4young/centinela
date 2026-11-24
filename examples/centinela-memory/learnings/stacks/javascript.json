@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "id": "js-fetch-explicit-timeout",
+      "scope": "stack",
+      "stacks": ["javascript"],
+      "paths": ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx"],
+      "category": "freeze",
+      "severity": "maintainer",
+      "rule": "Always pass AbortSignal.timeout(...) to outbound fetch calls so a hung upstream cannot stall a worker or request indefinitely.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "js-bounded-caches-and-listeners",
+      "scope": "stack",
+      "stacks": ["javascript"],
+      "paths": ["**/*.js", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx"],
+      "category": "memory",
+      "severity": "maintainer",
+      "rule": "Bound long-lived Maps, caches, and timers, and remove event listeners or intervals on teardown so long-running processes do not leak memory.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "js-node-lts-floor",
+      "scope": "stack",
+      "stacks": ["javascript"],
+      "paths": ["package.json", ".nvmrc", ".github/workflows/**"],
+      "category": "convention",
+      "severity": "suggestion",
+      "rule": "Keep .nvmrc, engines.node and @types/node aligned on the active Node.js LTS line.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    }
+  ],
+  "suppressions": [],
+  "glossary": {}
+}

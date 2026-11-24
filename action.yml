@@ -25,6 +25,14 @@ inputs:
     description: Check added lines for typos with crate-ci/typos.
     required: false
     default: 'true'
+  shared-memory-repo:
+    description: Optional repo name (same owner) holding shared Centinela config/learnings (e.g. centinela-memory).
+    required: false
+    default: ''
+  allow-learning-prs:
+    description: Grant contents write so lifecycle/learn runs can open learning PRs.
+    required: false
+    default: 'false'
   anthropic-federation-rule-id:
     description: Federation rule for the Claude API (workload identity). Enables /centinela review; the job needs id-token write.
     required: false
@@ -88,8 +96,9 @@ runs:
       with:
         client-id: ${{ inputs.app-client-id }}
         private-key: ${{ inputs.app-private-key }}
-        repositories: ${{ steps.repo.outputs.name }}
-        permission-contents: read
+        repositories: ${{ inputs.shared-memory-repo != '' && format('{0},{1}', steps.repo.outputs.name, inputs.shared-memory-repo) || steps.repo.outputs.name }}
+        permission-contents: ${{ inputs.allow-learning-prs == 'true' && 'write' || 'read' }}
+        permission-checks: read
         permission-issues: write
         permission-pull-requests: write
         permission-statuses: write

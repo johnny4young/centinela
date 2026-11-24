@@ -1,0 +1,77 @@
+name: Centinela Reusable
+
+on:
+  workflow_call:
+    inputs:
+      typos:
+        description: Check added lines for typos with crate-ci/typos.
+        required: false
+        type: string
+        default: 'true'
+
+permissions: {}
+
+jobs:
+  review:
+    name: Centinela
+    if: >-
+      (github.event_name == 'issue_comment' &&
+      github.event.comment.user.type != 'Bot' &&
+      (startsWith(github.event.comment.body, '/centinela') ||
+      contains(github.event.comment.body, '@centinela'))) ||
+      (github.event_name == 'pull_request_review_comment' &&
+      github.event.comment.user.type != 'Bot') ||
+      ((github.event_name == 'pull_request_target' || github.event_name == 'issues') &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      contains(fromJSON('["triage", "triage: approved", "bug"]'), github.event.label.name) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'centinela: ai-review')))
+    concurrency:
+      group: centinela-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: "${{ github.event_name != 'issue_comment' && github.event_name != 'pull_request_review_comment' && github.event.label.name != 'centinela: ai-review' }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+      checks: read
+      id-token: write
+    steps:
+      - uses: johnny4young/centinela@v1
+        with:
+          typos: ${{ inputs.typos }}
+          shared-memory-repo: ${{ vars.CENTINELA_MEMORY_REPO }}
+          app-client-id: ${{ vars.CENTINELA_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.CENTINELA_APP_PRIVATE_KEY }}
+          anthropic-federation-rule-id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic-organization-id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic-service-account-id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic-workspace-id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+
+  lifecycle:
+    name: Centinela lifecycle
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: centinela-lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      statuses: write
+      checks: read
+      id-token: write
+    steps:
+      - uses: johnny4young/centinela@v1
+        with:
+          typos: ${{ inputs.typos }}
+          shared-memory-repo: ${{ vars.CENTINELA_MEMORY_REPO }}
+          allow-learning-prs: 'true'
+          app-client-id: ${{ vars.CENTINELA_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.CENTINELA_APP_PRIVATE_KEY }}
+          anthropic-federation-rule-id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic-organization-id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic-service-account-id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic-workspace-id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}

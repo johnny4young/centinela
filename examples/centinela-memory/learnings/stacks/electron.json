@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "learnings": [
+    {
+      "id": "electron-no-blob-window-open",
+      "scope": "stack",
+      "stacks": ["electron"],
+      "paths": ["**/*.tsx", "**/*.ts"],
+      "category": "correctness",
+      "severity": "maintainer",
+      "rule": "Sandboxed Electron apps block renderer window.open and external blob: URLs; preview documents in-app or through a validated IPC handler.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    },
+    {
+      "id": "electron-print-cancelled-not-error",
+      "scope": "stack",
+      "stacks": ["electron"],
+      "paths": ["**/*print*", "**/*Print*"],
+      "category": "correctness",
+      "severity": "maintainer",
+      "rule": "Canceling a native Electron print dialog returns PRINT_CANCELLED; handle it cleanly without showing a printer failure toast.",
+      "status": "active",
+      "stats": { "byRepo": {} }
+    }
+  ],
+  "suppressions": [],
+  "glossary": {}
+}

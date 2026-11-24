@@ -1,6 +1,6 @@
 {
   "name": "centinela",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "private": true,
   "description": "Polite first-pass review of pull requests and issues from outside contributors.",
   "license": "MIT",
@@ -9,7 +9,12 @@
     "node": ">=26.13.1"
   },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "eval": "node evals/run-eval.mjs",
+    "init": "node src/cli-init.mjs"
+  },
+  "bin": {
+    "centinela-init": "src/cli-init.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.6.0"

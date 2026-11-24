@@ -94,10 +94,22 @@ const MESSAGES = {
       'It adds `nonisolated(unsafe)`, which turns off data-race checking for that declaration. A maintainer needs to confirm it is safe.',
     'swift-main-sync': () =>
       'It calls `DispatchQueue.main.sync`, which deadlocks when it runs on the main thread and blocks the caller otherwise. Please use `await MainActor.run` or an async hop.',
+    'swift-force-try': () =>
+      'It uses `try!` in production code, which crashes the app on error. Please handle or propagate the error.',
     'swift-sleep': () =>
       'It sleeps the thread. On the main actor this freezes the UI; please use `try await Task.sleep` instead.',
     'swift-xcodeproj-edit': () =>
       'It edits the Xcode project, which is generated from `project.yml` by XcodeGen. Please make the change in `project.yml` and regenerate.',
+    'go-http-default-client': () =>
+      'It uses `http.DefaultClient` or package-level helpers without a timeout. Please use an `http.Client` with an explicit timeout and request context.',
+    'go-sql-concat': () =>
+      'It formats SQL with `fmt.Sprintf`, which can allow SQL injection. Please use bound query parameters.',
+    'shell-eval': () =>
+      'It uses `eval` in a shell script. Please avoid dynamic evaluation or confirm the input is strictly controlled.',
+    'ui-left-accent-bar': () =>
+      'This adds a left accent bar. Please convey selection or emphasis with a subtle background tint, icon, font weight or full border instead.',
+    'internal-comment-ref': () =>
+      'Source comments should not carry internal ticket or planning decision IDs; keep only the technical constraint.',
     'rust-unsafe': () =>
       'It adds `unsafe` code. A maintainer needs to review it; please document the invariants that make it sound.',
     'workflow-injection': () =>
@@ -132,6 +144,16 @@ const MESSAGES = {
     'issue-incomplete': (p, ctx) =>
       `To reproduce it, please add: ${p.missing.map(m => field('en', m, ctx)).join(', ')}.`,
     'issue-media': () => 'A screenshot or short recording would help us a lot.',
+    'merge-conflict': p =>
+      `This branch has merge conflicts with ${code(p.base)}. Please rebase or merge ${code(p.base)} and resolve them.`,
+    'branch-behind': p =>
+      `This branch is ${p.behindBy} commits behind ${code(p.base)}. Rebasing on ${code(p.base)} will reduce surprises during review.`,
+    'migration-collision': p =>
+      `Migration ${code(p.prefix)} collides with or predates ${code(p.latest)} already on the base branch. Please rebase on main and regenerate it as ${code(p.next)}.`,
+    'pr-overlap': p =>
+      `This branch carries a commit (${code(p.subject)}) that already appears in open pull request #${p.number}. Please rebase so each pull request stays independent.`,
+    'ci-failure': p =>
+      `CI checks are failing (${list(p.checks)}${p.total > p.checks.length ? ` and ${p.total - p.checks.length} more` : ''}). Please inspect the logs and push a fix.`,
   },
   es: {
     title: p =>
@@ -192,10 +214,22 @@ const MESSAGES = {
       'Agrega `nonisolated(unsafe)`, que desactiva la verificación de carreras de datos en esa declaración. Un mantenedor debe confirmar que es seguro.',
     'swift-main-sync': () =>
       'Llama `DispatchQueue.main.sync`, que bloquea la app si corre en el hilo principal y detiene a quien lo llama en los demás casos. Por favor use `await MainActor.run`.',
+    'swift-force-try': () =>
+      'Usa `try!` en código de producción, lo que cierra la app si ocurre un error. Por favor maneje o propague el error.',
     'swift-sleep': () =>
       'Duerme el hilo. En el main actor esto congela la interfaz; por favor use `try await Task.sleep`.',
     'swift-xcodeproj-edit': () =>
       'Modifica el proyecto de Xcode, que se genera desde `project.yml` con XcodeGen. Por favor haga el cambio en `project.yml` y regenere el proyecto.',
+    'go-http-default-client': () =>
+      'Usa `http.DefaultClient` o helpers del paquete sin timeout. Por favor use un `http.Client` con timeout explícito y contexto.',
+    'go-sql-concat': () =>
+      'Construye SQL con `fmt.Sprintf`, lo que puede permitir inyección SQL. Por favor use parámetros enlazados.',
+    'shell-eval': () =>
+      'Usa `eval` en un script de shell. Por favor evite la evaluación dinámica o confirme que la entrada está controlada.',
+    'ui-left-accent-bar': () =>
+      'Agrega una barra de acento lateral izquierda. Por favor indique selección o énfasis con fondo sutil, ícono, peso tipográfico o borde completo.',
+    'internal-comment-ref': () =>
+      'Los comentarios en el código no deben incluir IDs internos de tickets ni decisiones de planeación; deje solo la restricción técnica.',
     'rust-unsafe': () =>
       'Agrega código `unsafe`. Un mantenedor debe revisarlo; por favor documente las invariantes que lo hacen correcto.',
     'workflow-injection': () =>
@@ -230,6 +264,16 @@ const MESSAGES = {
     'issue-incomplete': (p, ctx) =>
       `Para reproducirlo, por favor agregue: ${p.missing.map(m => field('es', m, ctx)).join(', ')}.`,
     'issue-media': () => 'Una captura o una grabación corta nos ayudaría mucho.',
+    'merge-conflict': p =>
+      `Esta rama tiene conflictos con ${code(p.base)}. Por favor haga rebase o merge de ${code(p.base)} y resuélvalos.`,
+    'branch-behind': p =>
+      `Esta rama está ${p.behindBy} commits detrás de ${code(p.base)}. Hacer rebase sobre ${code(p.base)} evitará sorpresas en la revisión.`,
+    'migration-collision': p =>
+      `La migración ${code(p.prefix)} choca con o precede a ${code(p.latest)} en la rama base. Por favor haga rebase sobre main y regenérela como ${code(p.next)}.`,
+    'pr-overlap': p =>
+      `Esta rama trae un commit (${code(p.subject)}) que ya está en la pull request abierta #${p.number}. Por favor haga rebase para mantener cada pull request independiente.`,
+    'ci-failure': p =>
+      `Hay chequeos de CI fallando (${list(p.checks)}${p.total > p.checks.length ? ` y ${p.total - p.checks.length} más` : ''}). Por favor revise los logs y suba la corrección.`,
   },
 };
 

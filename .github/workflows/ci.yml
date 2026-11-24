@@ -26,5 +26,6 @@ jobs:
           check-latest: true
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
+      - run: npm run eval
       - name: Validate the default config
         run: node -e "import('./src/lib/config.mjs').then(m => m.resolveConfig({}))"

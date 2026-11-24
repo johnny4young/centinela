@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-/** First-pass review of pull requests and issues from outside contributors; see README.md. */
+/** Autonomous triage, agentic review, issue management and self-learning for GitHub repos. */
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkIssue, checkPullRequest, sizeOf } from './lib/checks.mjs';
-import { parseConfig } from './lib/config.mjs';
+import { merge, parseConfig, parseRemoteRef, resolveConfig } from './lib/config.mjs';
 import {
   compareFindings,
   detectLanguage,
@@ -15,6 +15,7 @@ import {
 } from './lib/core.mjs';
 import { dependencyChanges, findTypos, localeGaps } from './lib/enrich.mjs';
 import { createClient } from './lib/github.mjs';
+import { collectHygiene } from './lib/hygiene.mjs';
 import { applyStack, detectStack } from './lib/packs.mjs';
 import { findContributing, loadTemplateSections } from './lib/template.mjs';
 import { isWorkflow } from './lib/workflows.mjs';
@@ -33,6 +34,7 @@ import {
   askClaude,
   buildPrompt,
   createModel,
+  exploreContext,
   inlineComment,
   loadFileContents,
   loadRelatedFiles,
@@ -43,8 +45,32 @@ import {
   renderAiComment,
   reviewBody,
   reviewComment,
+  selectReviewTier,
   validFindings,
+  verifyFindings,
 } from './lib/ai.mjs';
+import {
+  ISSUE_AI_MARKER,
+  issueAiKey,
+  readIssueAiKey,
+  renderIssueAiComment,
+  triageIssueWithAi,
+} from './lib/issues.mjs';
+import {
+  answerThread,
+  isCentinelaMention,
+  renderThreadReply,
+} from './lib/conversation.mjs';
+import {
+  applySuppressions,
+  harvestSignals,
+  learningStacksFor,
+  loadMultiProjectLearnings,
+  parseLearningsDoc,
+  planLearningUpdates,
+  renderLearningPrBody,
+  selectLearningsForFiles,
+} from './lib/learnings.mjs';
 import { lastActivity, lifecycleAction, lifecycleComment, reminderAt } from './lib/lifecycle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -60,12 +86,40 @@ export const CONFIG_PATH = '.github/centinela.json';
 
 /**
  * The project config, read from the base branch through the API so a pull request can never
- * change its own rules. `--config <file>` reads a local file instead, for dry runs.
+ * change its own rules. Supports `"extends": "owner/repo/path.json[@ref]"` for fleet sharing.
  */
 export async function loadConfig({ client, file, ref }) {
-  if (file) return parseConfig(readFileSync(file, 'utf8'));
-  const base = ref ?? (await client.repository()).default_branch;
-  return parseConfig(await client.fileAt(CONFIG_PATH, base));
+  let rawText;
+  if (file) {
+    rawText = readFileSync(file, 'utf8');
+  } else {
+    const base = ref ?? (await client.repository()).default_branch;
+    rawText = await client.fileAt(CONFIG_PATH, base);
+  }
+  if (!rawText) return resolveConfig({});
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (error) {
+    throw new Error(`centinela: invalid config: ${error.message}`);
+  }
+  if (parsed?.extends && client?.externalFileAt) {
+    const remote = parseRemoteRef(parsed.extends);
+    if (remote?.path) {
+      const baseText = await client
+        .externalFileAt(remote.repo, remote.path, remote.ref)
+        .catch(() => null);
+      if (baseText) {
+        try {
+          const baseObj = JSON.parse(baseText);
+          parsed = merge(baseObj, parsed);
+        } catch {
+          // Ignore malformed remote base and fall back to local config.
+        }
+      }
+    }
+  }
+  return parseConfig(JSON.stringify(parsed));
 }
 
 /** Changes whenever Centinela or the project config changes, so open items are reviewed once more. */
@@ -89,20 +143,38 @@ export function parseTarget(argv, env) {
     const index = argv.indexOf(name);
     return index >= 0 ? Number(argv[index + 1]) : null;
   };
+  const strFlag = name => {
+    const index = argv.indexOf(name);
+    return index >= 0 ? argv[index + 1] : null;
+  };
   const dryRun = argv.includes('--dry-run');
-  const configIndex = argv.indexOf('--config');
-  const configFile = configIndex >= 0 ? argv[configIndex + 1] : null;
+  const configFile = strFlag('--config');
   // --force replays closed, skipped or unchanged items; only allowed with --dry-run.
   const force = dryRun && argv.includes('--force');
   const manual = { dryRun, force, configFile, action: null, ref: null };
   if (argv.includes('--lifecycle')) return { kind: 'lifecycle', ...manual };
+  if (argv.includes('--learn')) return { kind: 'learn', ...manual };
   // A manual AI review; with --dry-run it only reports the prompt size and calls nothing.
   if (flag('--pr') && argv.includes('--review')) {
     return {
       kind: 'pr',
       number: flag('--pr'),
       ...manual,
-      command: { name: 'review', manual: true, again: argv.includes('--again'), language: 'en' },
+      command: {
+        name: 'review',
+        manual: true,
+        again: argv.includes('--again'),
+        tier: strFlag('--tier') || 'deep',
+        language: 'en',
+      },
+    };
+  }
+  if (flag('--issue') && argv.includes('--triage')) {
+    return {
+      kind: 'issue',
+      number: flag('--issue'),
+      ...manual,
+      command: { name: 'triage', manual: true, language: 'en' },
     };
   }
   if (flag('--pr')) return { kind: 'pr', number: flag('--pr'), ...manual };
@@ -113,7 +185,25 @@ export function parseTarget(argv, env) {
   if (['schedule', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)) {
     return { kind: 'lifecycle', dryRun, force: false, configFile, action: null, ref: null };
   }
+  if (env.GITHUB_EVENT_NAME === 'pull_request_review_comment') {
+    return {
+      kind: 'pr',
+      number: event.pull_request?.number,
+      dryRun,
+      force: false,
+      configFile,
+      ref: env.GITHUB_SHA ?? null,
+      action: event.action ?? null,
+      conversation: {
+        isReviewComment: true,
+        comment: event.comment,
+        inReplyToId: event.comment?.in_reply_to_id ?? null,
+        language: detectLanguage(event.comment?.body ?? ''),
+      },
+    };
+  }
   if (env.GITHUB_EVENT_NAME === 'issue_comment') {
+    const cmdName = parseCommand(event.comment?.body);
     return {
       kind: event.issue.pull_request ? 'pr' : 'issue',
       number: event.issue.number,
@@ -122,16 +212,26 @@ export function parseTarget(argv, env) {
       configFile,
       ref: env.GITHUB_SHA ?? null,
       action: event.action ?? null,
-      command: {
-        name: parseCommand(event.comment?.body),
-        commentId: event.comment?.id,
-        login: event.comment?.user?.login,
-        association: event.comment?.author_association,
-        bot: event.comment?.user?.type === 'Bot',
-        itemAuthor: event.issue.user?.login,
-        again: wantsAgain(event.comment?.body),
-        language: detectLanguage(event.comment?.body ?? ''),
-      },
+      command: cmdName
+        ? {
+            name: cmdName,
+            commentId: event.comment?.id,
+            login: event.comment?.user?.login,
+            association: event.comment?.author_association,
+            bot: event.comment?.user?.type === 'Bot',
+            itemAuthor: event.issue.user?.login,
+            again: wantsAgain(event.comment?.body),
+            language: detectLanguage(event.comment?.body ?? ''),
+          }
+        : null,
+      conversation: !cmdName
+        ? {
+            isReviewComment: false,
+            comment: event.comment,
+            inReplyToId: null,
+            language: detectLanguage(event.comment?.body ?? ''),
+          }
+        : null,
     };
   }
   const number = event.pull_request?.number ?? event.issue?.number;
@@ -235,6 +335,7 @@ export async function triagePullRequest({
   repo,
   version,
   botLogin = null,
+  env = process.env,
   log,
 }) {
   const pr = await client.pull(number);
@@ -294,6 +395,13 @@ export async function triagePullRequest({
     client.pullFiles(number),
     client.pullCommits(number),
   ]);
+  const mappedCommits = commits.map(c => ({
+    sha: c.sha,
+    authorLogin: c.author?.login ?? null,
+    committerLogin: c.committer?.login ?? null,
+    verified: c.commit.verification?.verified === true,
+    message: c.commit.message,
+  }));
   const fileAt = (file, ref) => client.fileAt(file, ref);
   const stack = await detectStack({
     client,
@@ -314,33 +422,44 @@ export async function triagePullRequest({
     const content = workflows.length < 30 ? await fileAt(file.filename, pr.head.sha) : null;
     workflows.push({ file: file.filename, content });
   }
-  const [gaps, dependencies, typos] = await Promise.all([
+  const [gaps, dependencies, typos, hygiene, learned] = await Promise.all([
     localeGaps({ files, fileAt, headSha: pr.head.sha, parity: config.language.localeParity }),
     dependencyChanges({ files, fileAt, baseSha: pr.base.sha, headSha: pr.head.sha }),
     config.language.typos
       ? findTypos({
           files,
           exclude: config.language.typosExclude,
+          ignoreWords: config.language.typosIgnoreWords ?? [],
+          spanishEnabled: Boolean(config.language.spanishRegister),
           required: process.env.CENTINELA_REQUIRE_TYPOS === '1',
         })
       : [],
+    collectHygiene({
+      client,
+      pr,
+      files,
+      commits: mappedCommits,
+      basePaths: stack.paths,
+      config: effective,
+    }),
+    loadMultiProjectLearnings({
+      client,
+      ref: pr.base.ref ?? pr.base.sha,
+      stacks: stack.packs,
+      paths: stack.paths,
+      config: effective,
+    }),
   ]);
   if (typos === null) log('typos binary not found; spelling check skipped');
 
-  const compared = compareFindings(
-    checkPullRequest({
+  const rawFindings = [
+    ...checkPullRequest({
       totals: { files: pr.changed_files, commits: pr.commits },
       title: pr.title,
       body: pr.body ?? '',
       author: pr.user.login,
       files,
-      commits: commits.map(c => ({
-        sha: c.sha,
-        authorLogin: c.author?.login ?? null,
-        committerLogin: c.committer?.login ?? null,
-        verified: c.commit.verification?.verified === true,
-        message: c.commit.message,
-      })),
+      commits: mappedCommits,
       config: effective,
       rules,
       workflows,
@@ -349,6 +468,10 @@ export async function triagePullRequest({
       dependencies,
       typos: typos ?? [],
     }),
+    ...hygiene.findings,
+  ];
+  const compared = compareFindings(
+    applySuppressions(rawFindings, learned.suppressions),
     previous?.seen ?? null
   );
   const { findings } = compared;
@@ -397,27 +520,43 @@ export async function triagePullRequest({
 
   const { labels: names } = config;
   const sizeLabels = Object.keys(names.size).map(label => `size/${label}`);
+  const hasCiFailure = findings.some(f => f.id === 'ci-failure');
   const wanted = new Set([`size/${size.label}`]);
   if (result.blocking) wanted.add(names.waitingOnAuthor.name);
   if (result.maintainer) wanted.add(names.needsMaintainer.name);
+  if (result.state === 'success' && !hasCiFailure && names.readyForMaintainer) {
+    wanted.add(names.readyForMaintainer.name);
+  }
   for (const label of wanted) {
     const definition = label.startsWith('size/')
       ? { name: label, color: names.size[label.slice(5)].color }
-      : Object.values(names).find(entry => entry.name === label);
-    await client.ensureLabel(definition);
+      : Object.values(names).find(entry => entry?.name === label);
+    if (definition) await client.ensureLabel(definition);
   }
   // A push during the review gets its own run; never bind these results to a newer head.
   const current = await client.pull(number);
   if (current.head.sha !== pr.head.sha)
     return log(`#${number} moved to a new head; leaving it to the next run`);
   await client.upsertComment(number, existing, body);
-  await syncLabels(client, number, labels, wanted, [
+  const managed = [
     ...sizeLabels,
     names.waitingOnAuthor.name,
     names.needsMaintainer.name,
-  ]);
+    ...(names.readyForMaintainer ? [names.readyForMaintainer.name] : []),
+  ];
+  await syncLabels(client, number, labels, wanted, managed);
   await client.setStatus(pr.head.sha, result.state, description);
   log(`#${number} reviewed: ${result.state} (${findings.length} findings)`);
+
+  // Cost-tiered automatic AI review for ready external PRs when credentials are configured.
+  const tier = selectReviewTier({ files, sizeLabel: size.label, config });
+  if (tier !== 'off' && !result.blocking && aiConfigured(env)) {
+    await runAiReview({
+      options: { client, config, number, dryRun, force, repo, version, botLogin, log },
+      tier,
+      env,
+    }).catch(error => log(`auto AI review (${tier}) failed: ${error.message}`));
+  }
   return { findings, result };
 }
 
@@ -428,10 +567,13 @@ export async function triageIssue({
   dryRun,
   force,
   recheck = false,
+  runAi = false,
   ref = null,
   repo,
   version,
   botLogin = null,
+  env = process.env,
+  model = null,
   log,
 }) {
   const issue = await client.issue(number);
@@ -445,8 +587,9 @@ export async function triageIssue({
     draft: false,
     config,
   });
-  if (skip && !force) return log(`#${number} skipped: ${skip}`);
+  if (skip && !force && !runAi) return log(`#${number} skipped: ${skip}`);
 
+  const comments = await client.comments(number);
   const key = reviewKey({
     rulesVersion: version,
     kind: 'issue',
@@ -454,45 +597,107 @@ export async function triageIssue({
     body: issue.body,
     labels: labels.filter(name => name === config.issues.bugLabel),
   });
-  const existing = ownComment(await client.comments(number), botLogin);
-  if (existing && readMarker(existing.body) === key && !force && !recheck)
-    return log(`#${number} unchanged since the last review`);
+  const existing = ownComment(comments, botLogin);
+  const unchanged = existing && readMarker(existing.body) === key && !force && !recheck;
 
-  const compared = compareFindings(
-    checkIssue({ title: issue.title, body: issue.body ?? '', labels, config }),
-    parseMarker(existing?.body)?.seen ?? null
-  );
-  const { findings } = compared;
-  const welcome = await welcomeFor({
-    association: issue.author_association,
-    config,
-    paths: async () =>
-      client.tree(ref ?? (await client.repository()).default_branch).catch(() => []),
-  });
-  const body = renderComment({
-    kind: 'issue',
-    repo,
-    config,
-    author: issue.user.login,
-    findings,
-    language: detectLanguage(issue.title, issue.body ?? ''),
-    key,
-    rulesVersion: version,
-    approved: false,
-    seen: compared.seen,
-    resolved: compared.resolved,
-    welcome,
-  });
-  if (dryRun) {
-    log(body);
-    return { findings };
+  let findings = [];
+  if (!unchanged) {
+    const compared = compareFindings(
+      checkIssue({ title: issue.title, body: issue.body ?? '', labels, config }),
+      parseMarker(existing?.body)?.seen ?? null
+    );
+    findings = compared.findings;
+    const welcome = await welcomeFor({
+      association: issue.author_association,
+      config,
+      paths: async () =>
+        client.tree(ref ?? (await client.repository()).default_branch).catch(() => []),
+    });
+    const body = renderComment({
+      kind: 'issue',
+      repo,
+      config,
+      author: issue.user.login,
+      findings,
+      language: detectLanguage(issue.title, issue.body ?? ''),
+      key,
+      rulesVersion: version,
+      approved: false,
+      seen: compared.seen,
+      resolved: compared.resolved,
+      welcome,
+    });
+    if (dryRun) {
+      log(body);
+    } else {
+      const needsInfo = config.labels.needsInfo;
+      const wanted = new Set(findings.some(f => f.severity === 'blocking') ? [needsInfo.name] : []);
+      if (wanted.size) await client.ensureLabel(needsInfo);
+      if (findings.length || existing) await client.upsertComment(number, existing, body);
+      await syncLabels(client, number, labels, wanted, [needsInfo.name]);
+      log(`#${number} reviewed (${findings.length} findings)`);
+    }
+  } else {
+    log(`#${number} unchanged since the last review`);
   }
-  const needsInfo = config.labels.needsInfo;
-  const wanted = new Set(findings.some(f => f.severity === 'blocking') ? [needsInfo.name] : []);
-  if (wanted.size) await client.ensureLabel(needsInfo);
-  if (findings.length || existing) await client.upsertComment(number, existing, body);
-  await syncLabels(client, number, labels, wanted, [needsInfo.name]);
-  log(`#${number} reviewed (${findings.length} findings)`);
+
+  // Semantic AI issue triage: auto-labeling, duplicate/already-fixed detection and direction.
+  const shouldRunAi =
+    (runAi || config.issues?.aiTriage !== false) && (model || aiConfigured(env));
+  if (shouldRunAi) {
+    const existingAi =
+      comments.findLast(
+        c =>
+          c.user?.type === 'Bot' &&
+          (!botLogin || c.user.login === botLogin) &&
+          c.body?.startsWith(ISSUE_AI_MARKER)
+      ) ?? null;
+    if (existingAi && readIssueAiKey(existingAi.body) === issueAiKey(issue) && !runAi && !force) {
+      return { findings };
+    }
+    const baseRef = ref ?? (await client.repository().catch(() => ({ default_branch: 'main' }))).default_branch;
+    const [rules, stack] = await Promise.all([
+      loadProjectRules({ client, ref: baseRef, paths: config.ai.rules }),
+      detectStack({ client, ref: baseRef, setting: config.stack, legacy: config.rules }).catch(
+        () => ({ packs: [], paths: [] })
+      ),
+    ]);
+    const learned = await loadMultiProjectLearnings({
+      client,
+      ref: baseRef,
+      stacks: stack.packs,
+      paths: stack.paths,
+      config,
+    });
+    const language = detectLanguage(issue.title, issue.body ?? '');
+    const aiModel = model ?? (await createModel(env));
+    const outcome = await triageIssueWithAi({
+      model: aiModel,
+      client,
+      issue,
+      rules,
+      learnings: learned.learnings,
+      tracked: stack.paths,
+      language,
+      config,
+    });
+    if (outcome.result) {
+      const commentBody = renderIssueAiComment({ issue, result: outcome.result, language });
+      if (dryRun) {
+        log(commentBody);
+      } else {
+        await client.upsertComment(number, existingAi, commentBody);
+        if (config.issues?.autoLabel !== false && outcome.result.labels?.length) {
+          const toAdd = outcome.result.labels.filter(l => !labels.includes(l));
+          for (const name of toAdd) {
+            await client.ensureLabel({ name, color: name.startsWith('area:') ? '5319e7' : 'ededed' });
+          }
+          if (toAdd.length) await client.addLabels(number, toAdd);
+        }
+      }
+      return { findings, ai: outcome.result };
+    }
+  }
   return { findings };
 }
 
@@ -500,9 +705,14 @@ export async function triageIssue({
  * A `/centinela` command from a comment. Only the author and maintainers are answered; a
  * recheck reviews the item again even when nothing it reads has changed.
  */
-export async function runCommand({ command, options, kind }) {
+export async function runCommand({ command, options, kind, env = process.env }) {
   const { client, config, dryRun, log } = options;
-  if (command.manual) return runAiReview({ options, again: command.again });
+  if (command.manual && command.name === 'review') {
+    return runAiReview({ options, again: command.again, tier: command.tier ?? 'deep', env });
+  }
+  if (command.manual && command.name === 'triage') {
+    return triageIssue({ ...options, runAi: true, env });
+  }
   if (!command.name || command.bot) return log('no Centinela command in this comment');
   if (!canRun({ ...command, config }))
     return log(`${command.login} may not run Centinela commands here`);
@@ -517,14 +727,38 @@ export async function runCommand({ command, options, kind }) {
   await react('eyes');
   if (command.name === 'review') {
     if (kind !== 'pr') return react('confused');
-    const reviewed = await runAiReview({ options, again: command.again }).catch(error => {
+    const reviewed = await runAiReview({
+      options,
+      again: command.again,
+      tier: 'deep',
+      env,
+    }).catch(error => {
       log(`AI review failed: ${error.message}`);
       return null;
     });
     return react(reviewed ? '+1' : 'confused');
   }
+  if (command.name === 'triage') {
+    if (kind !== 'issue') return react('confused');
+    const triaged = await triageIssue({ ...options, runAi: true, env }).catch(error => {
+      log(`AI issue triage failed: ${error.message}`);
+      return null;
+    });
+    return react(triaged ? '+1' : 'confused');
+  }
+  if (command.name === 'learn') {
+    const learned = await runLearn({ options, openPr: !dryRun }).catch(error => {
+      log(`learning run failed: ${error.message}`);
+      return null;
+    });
+    return react(learned ? '+1' : 'confused');
+  }
+  if (command.name === 'draft-pr' || command.name === 'fix-nits') {
+    log(`command /centinela ${command.name} is handled by the Tier 2 execution workflow`);
+    return react('+1');
+  }
   const triage = kind === 'pr' ? triagePullRequest : triageIssue;
-  const result = await triage({ ...options, recheck: true });
+  const result = await triage({ ...options, recheck: true, env });
   await react('+1');
   return result;
 }
@@ -533,7 +767,13 @@ export async function runCommand({ command, options, kind }) {
  * A Claude review of the pull request diff, posted as its own comment and kept apart from the
  * status: model output never approves or blocks. Once per head unless asked again.
  */
-export async function runAiReview({ options, again = false, env = process.env, model = null }) {
+export async function runAiReview({
+  options,
+  again = false,
+  tier = 'deep',
+  env = process.env,
+  model = null,
+}) {
   const { client, config, number, dryRun, botLogin, log } = options;
   const pr = await client.pull(number);
   if (pr.state !== 'open' && !options.force) return log(`#${number} is ${pr.state}; no AI review`);
@@ -549,12 +789,40 @@ export async function runAiReview({ options, again = false, env = process.env, m
     log(`#${number} already has an AI review for ${pr.head.sha}`);
     return true;
   }
-  const [files, rules, stack] = await Promise.all([
+  const [files, rules, stack, rawReviewComments, rawCheckRuns] = await Promise.all([
     client.pullFiles(number),
     // The base branch tip: trusted, and newer than the commit the pull request started from.
     loadProjectRules({ client, ref: pr.base.ref, paths: config.ai.rules }),
     detectStack({ client, ref: pr.base.sha, setting: config.stack, legacy: config.rules }),
+    client.reviewComments ? client.reviewComments(number).catch(() => []) : [],
+    client.checkRuns ? client.checkRuns(pr.head.sha).catch(() => []) : [],
   ]);
+  const learned = await loadMultiProjectLearnings({
+    client,
+    ref: pr.base.ref ?? pr.base.sha,
+    stacks: stack.packs,
+    paths: stack.paths,
+    config,
+  });
+  const selectedLearnings = selectLearningsForFiles({
+    learnings: learned.learnings,
+    suppressions: learned.suppressions,
+    files,
+  });
+  const existingReviews = rawReviewComments
+    .filter(c => !(c.user?.type === 'Bot' && (!botLogin || c.user.login === botLogin)))
+    .map(c => ({ user: c.user?.login, path: c.path, line: c.line, body: c.body }));
+  const ciFailures = rawCheckRuns
+    .filter(
+      r =>
+        r.status === 'completed' &&
+        ['failure', 'timed_out'].includes(r.conclusion) &&
+        !String(r.name ?? '')
+          .toLowerCase()
+          .includes((config.statusContext ?? 'centinela').toLowerCase())
+    )
+    .map(r => ({ name: r.name, conclusion: r.conclusion, summary: r.output?.title ?? null }));
+
   const contents = await loadFileContents({
     client,
     files,
@@ -571,10 +839,14 @@ export async function runAiReview({ options, again = false, env = process.env, m
     head: pr.head.sha,
     config,
   });
-  const prompt = buildPrompt({
+  let prompt = buildPrompt({
     pr,
     files,
     rules,
+    learnings: selectedLearnings,
+    glossary: learned.glossary?.[language] ?? [],
+    existingReviews,
+    ciFailures,
     contents,
     related,
     stack: stack.packs,
@@ -582,27 +854,71 @@ export async function runAiReview({ options, again = false, env = process.env, m
     config,
   });
   log(
-    `#${number} AI review prompt: ~${prompt.tokens} tokens, ${prompt.files.length} files, ${prompt.fullFiles} in full, ${prompt.relatedFiles} related${rules.length ? `, rules from ${rules.map(r => r.file).join(', ')}` : ''}`
+    `#${number} AI review (${tier}) prompt: ~${prompt.tokens} tokens, ${prompt.files.length} files, ${prompt.fullFiles} in full, ${prompt.relatedFiles} related, ${selectedLearnings.length} learnings${rules.length ? `, rules from ${rules.map(r => r.file).join(', ')}` : ''}`
   );
   if (dryRun && !model) return { prompt };
   if (!prompt.tooLarge && !model && !aiConfigured(env)) {
     log('the Claude API is not configured; set the federation variables or ANTHROPIC_API_KEY');
     return false;
   }
+  const activeModel = prompt.tooLarge ? null : (model ?? (await createModel(env)));
+
+  // Phase 1: Agentic read-only exploration for cross-package callers, policies and contracts.
+  if (!prompt.tooLarge && activeModel) {
+    const explored = await exploreContext({
+      model: activeModel,
+      prompt,
+      client,
+      pr,
+      tracked,
+      config,
+      tier,
+    });
+    if (explored.context) {
+      log(`agentic exploration: ${explored.steps} tool call(s)`);
+      prompt = buildPrompt({
+        pr,
+        files,
+        rules,
+        learnings: selectedLearnings,
+        glossary: learned.glossary?.[language] ?? [],
+        existingReviews,
+        ciFailures,
+        exploredContext: explored.context,
+        contents,
+        related,
+        stack: stack.packs,
+        language,
+        config,
+      });
+    }
+  }
+
   const outcome = prompt.tooLarge
     ? { tooLarge: true }
-    : await askClaude({ model: model ?? (await createModel(env)), prompt, config });
+    : await askClaude({ model: activeModel, prompt, config, tier });
   if (outcome.usage)
     log(`usage: ${outcome.usage.input} input, ${outcome.usage.output} output tokens`);
+
+  // Phase 2: Critic / verifier removes false positives and duplicates before posting.
+  if (outcome.result?.findings?.length && activeModel) {
+    const verified = await verifyFindings({
+      model: activeModel,
+      prompt,
+      findings: validFindings(outcome.result, prompt.files),
+      config,
+    });
+    if (verified.dropped > 0) log(`verifier filtered ${verified.dropped} low-signal finding(s)`);
+    outcome.result = { ...outcome.result, findings: verified.findings };
+  }
+
   // Findings that sit on a diff line go out as one review; a later review never repeats them.
   let inline = [];
   if (outcome.result) {
     const plan = planInline({
       findings: validFindings(outcome.result, prompt.files),
       files,
-      posted: dryRun
-        ? new Set()
-        : postedFingerprints(await client.reviewComments(number), botLogin),
+      posted: dryRun ? new Set() : postedFingerprints(rawReviewComments, botLogin),
       enabled: config.ai.inline,
     });
     inline = plan.inline;
@@ -637,6 +953,181 @@ export async function runAiReview({ options, again = false, env = process.env, m
   }
   await client.upsertComment(number, existing, body);
   return { prompt, outcome, inline };
+}
+
+/**
+ * Replies to questions or pushback on a Centinela review thread or `@centinela` mention,
+ * logging structured feedback markers so the self-learning loop captures dismissals.
+ */
+export async function runConversation({
+  options,
+  conversation,
+  env = process.env,
+  model = null,
+}) {
+  const { client, config, number, dryRun, botLogin, log } = options;
+  if (config.conversation?.enabled === false) return log('conversation replies are off');
+  const comment = conversation?.comment;
+  if (!comment || comment.user?.type === 'Bot') return log('ignoring bot comment');
+
+  let parentComment = null;
+  if (conversation.isReviewComment) {
+    if (!conversation.inReplyToId) return log('top-level review comment is not a Centinela reply');
+    const comments = await client.reviewComments(number).catch(() => []);
+    parentComment = comments.find(c => c.id === conversation.inReplyToId) ?? null;
+    const isOwnParent =
+      parentComment?.user?.type === 'Bot' &&
+      (!botLogin || parentComment.user.login === botLogin);
+    if (!isOwnParent && !isCentinelaMention(comment.body, botLogin)) {
+      return log('review reply is not addressed to Centinela');
+    }
+  } else if (!isCentinelaMention(comment.body, botLogin)) {
+    return log('comment does not mention Centinela');
+  }
+
+  if (!model && !aiConfigured(env)) return log('Claude API is not configured for replies');
+  const item = conversation.isReviewComment
+    ? await client.pull(number)
+    : await client.issue(number);
+  const baseRef = item.base?.ref ?? (await client.repository().catch(() => ({ default_branch: 'main' }))).default_branch;
+  const [rules, stack] = await Promise.all([
+    loadProjectRules({ client, ref: baseRef, paths: config.ai.rules }),
+    detectStack({ client, ref: baseRef, setting: config.stack, legacy: config.rules }).catch(
+      () => ({ packs: [], paths: [] })
+    ),
+  ]);
+  const learned = await loadMultiProjectLearnings({
+    client,
+    ref: baseRef,
+    stacks: stack.packs,
+    paths: stack.paths,
+    config,
+  });
+  const activeModel = model ?? (await createModel(env));
+  const response = await answerThread({
+    model: activeModel,
+    item,
+    comment,
+    parentComment,
+    rules,
+    learnings: learned.learnings,
+    language: conversation.language,
+    config,
+  });
+  if (!response.result) return log('could not generate thread reply');
+  const reply = renderThreadReply(response);
+  if (dryRun) {
+    log(reply);
+    return response;
+  }
+  if (conversation.isReviewComment && client.replyToReviewComment) {
+    await client.replyToReviewComment(number, parentComment?.id ?? comment.id, reply);
+    // Collapse confirmed false positives so they never clutter the PR or block merge rules.
+    if (response.result.outcome === 'dismissed' && client.resolveReviewThreadForComment) {
+      await client
+        .resolveReviewThreadForComment(number, parentComment?.id ?? comment.id)
+        .catch(() => false);
+    }
+  } else {
+    await client.comment(number, reply);
+  }
+  return response;
+}
+
+/**
+ * Self-learning pass: harvests maintainer reviews & feedback reactions, routes candidates to
+ * local repo or shared multi-project memory, retires noisy rules, and opens/updates learning PRs.
+ */
+export async function runLearn({ options, openPr = false }) {
+  const { client, config, dryRun, botLogin, repo, log } = options;
+  const repoInfo = await client.repository().catch(() => ({ default_branch: 'main', private: false }));
+  const baseBranch = repoInfo.default_branch ?? 'main';
+  const isPrivate = repoInfo.private === true;
+  const [signals, stack] = await Promise.all([
+    harvestSignals({ client, config, repo, botLogin }),
+    detectStack({ client, ref: baseBranch, setting: config.stack, legacy: config.rules }).catch(
+      () => ({ packs: [], paths: [] })
+    ),
+  ]);
+  const localPath = config.learnings?.localPath || '.github/centinela/learnings.json';
+  const localText = await client.fileAt(localPath, baseBranch).catch(() => null);
+  const currentLocal = parseLearningsDoc(localText);
+
+  const sharedRef = parseRemoteRef(config.learnings?.shared);
+  const activeStacks = learningStacksFor({ packs: stack.packs, paths: stack.paths });
+  const currentShared = new Map();
+  if (sharedRef && client.externalFileAt) {
+    const prefix = sharedRef.path ? `${sharedRef.path.replace(/\/+$/, '')}/` : 'learnings/';
+    for (const key of ['global.json', ...activeStacks.map(s => `stacks/${s}.json`)]) {
+      const text = await client
+        .externalFileAt(sharedRef.repo, `${prefix}${key}`, sharedRef.ref)
+        .catch(() => null);
+      if (text) currentShared.set(key, parseLearningsDoc(text));
+    }
+  }
+
+  const plan = planLearningUpdates({
+    currentLocal,
+    currentShared,
+    signals,
+    stacks: activeStacks,
+    repo,
+    isPrivate,
+    config,
+  });
+  const body = renderLearningPrBody(plan, { repo });
+  log(
+    `learn: scanned ${signals.scannedPrs} PRs · +${plan.addedLocal.length} local, +${plan.addedShared.length} shared, -${plan.retirements.length} retired, ${plan.promotions.length} promotable`
+  );
+  if (dryRun || !openPr) {
+    if (plan.addedLocal.length || plan.addedShared.length || plan.retirements.length) log(body);
+    return plan;
+  }
+
+  const branch = 'chore/centinela-learnings';
+  if ((plan.addedLocal.length || plan.retirements.length) && client.ensureBranch) {
+    await client.ensureBranch({ targetRepo: repo, branch, from: baseBranch });
+    await client.upsertRepoFile({
+      targetRepo: repo,
+      filePath: localPath,
+      content: `${JSON.stringify(plan.nextLocal, null, 2)}\n`,
+      branch,
+      message: 'chore(centinela): update local learned rules',
+    });
+    await client.openOrUpdatePull({
+      targetRepo: repo,
+      head: branch,
+      base: baseBranch,
+      title: 'chore(centinela): update learned rules',
+      body,
+    });
+  }
+  if (sharedRef && plan.sharedUpdates.size && client.ensureBranch) {
+    const sharedBranch = `chore/centinela-learnings-${repo.split('/').pop()}`;
+    const prefix = sharedRef.path ? `${sharedRef.path.replace(/\/+$/, '')}/` : 'learnings/';
+    await client.ensureBranch({
+      targetRepo: sharedRef.repo,
+      branch: sharedBranch,
+      from: sharedRef.ref,
+    });
+    for (const [key, doc] of plan.sharedUpdates) {
+      await client.upsertRepoFile({
+        targetRepo: sharedRef.repo,
+        filePath: `${prefix}${key}`,
+        content: `${JSON.stringify(doc, null, 2)}\n`,
+        branch: sharedBranch,
+        message: `chore(centinela): update ${key} from ${repo.split('/').pop()}`,
+      });
+    }
+    await client.openOrUpdatePull({
+      targetRepo: sharedRef.repo,
+      head: sharedBranch,
+      base: sharedRef.ref,
+      title: `chore(centinela): fleet learnings from ${repo.split('/').pop()}`,
+      body,
+    });
+  }
+  return plan;
 }
 
 /**
@@ -734,7 +1225,7 @@ export function relevantEvent(target, config) {
 export async function runLabeledAiReview(options) {
   const { client, config, number, dryRun, log } = options;
   try {
-    return await runAiReview({ options, again: true });
+    return await runAiReview({ options, again: true, tier: 'deep' });
   } catch (error) {
     log(`AI review failed: ${error.message}`);
     return false;
@@ -755,7 +1246,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
   const client = createClient({ token, repo, statusContext: config.statusContext });
   const botLogin =
     env.CENTINELA_BOT_LOGIN || (env.GITHUB_ACTIONS === 'true' ? 'github-actions[bot]' : null);
-  if (target.kind !== 'lifecycle' && !relevantEvent(target, config))
+  if (
+    target.kind !== 'lifecycle' &&
+    target.kind !== 'learn' &&
+    !relevantEvent(target, config)
+  )
     return log(`label ${target.eventLabel} does not affect the review`);
   const options = {
     client,
@@ -773,18 +1268,30 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     repo,
     log,
   };
+  if (target.kind === 'learn') {
+    return runLearn({ options, openPr: !target.dryRun });
+  }
   if (target.kind === 'lifecycle') {
     await runLifecycle({ client, config, dryRun: target.dryRun, botLogin, log });
-    return runBackfill(options);
+    await runBackfill(options);
+    if (config.learnings?.weeklyPr && new Date().getUTCDay() === 1) {
+      await runLearn({ options, openPr: !target.dryRun }).catch(error =>
+        log(`weekly learning pass failed: ${error.message}`)
+      );
+    }
+    return;
   }
-  if (target.command) return runCommand({ command: target.command, options, kind: target.kind });
+  if (target.command) return runCommand({ command: target.command, options, kind: target.kind, env });
+  if (target.conversation) return runConversation({ options, conversation: target.conversation, env });
   if (
     target.kind === 'pr' &&
     target.action === 'labeled' &&
     target.eventLabel === config.labels.aiReview.name
   )
     return runLabeledAiReview(options);
-  return target.kind === 'pr' ? triagePullRequest(options) : triageIssue(options);
+  return target.kind === 'pr'
+    ? triagePullRequest({ ...options, env })
+    : triageIssue({ ...options, env });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

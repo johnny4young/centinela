@@ -54,13 +54,80 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
     pullCommits: number => paginate(`/{repo}/pulls/${number}/commits`, 250),
     comments: number => paginate(`/{repo}/issues/${number}/comments`),
     reviewComments: number => paginate(`/{repo}/pulls/${number}/comments`),
+    reviews: number => paginate(`/{repo}/pulls/${number}/reviews`),
     createReview: (number, review) =>
       request('POST', `/{repo}/pulls/${number}/reviews`, { body: review }),
+    replyToReviewComment: (number, commentId, body) =>
+      request('POST', `/{repo}/pulls/${number}/comments/${commentId}/replies`, { body: { body } }),
+    async resolveReviewThreadForComment(number, commentId) {
+      const [owner, name] = repo.split('/');
+      const query = `query($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                isResolved
+                comments(first: 10) { nodes { databaseId } }
+              }
+            }
+          }
+        }
+      }`;
+      const { data } = await request('POST', `${API}/graphql`, {
+        body: { query, variables: { owner, name, number } },
+        allow: [403],
+      });
+      const threads = data?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+      const thread = threads.find(
+        t => !t.isResolved && t.comments?.nodes?.some(c => c.databaseId === commentId)
+      );
+      if (!thread) return false;
+      const mutation = `mutation($threadId: ID!) {
+        resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } }
+      }`;
+      const res = await request('POST', `${API}/graphql`, {
+        body: { query: mutation, variables: { threadId: thread.id } },
+        allow: [403],
+      });
+      return res.data?.data?.resolveReviewThread?.thread?.isResolved === true;
+    },
+    reactions: (commentId, reviewComment = false) =>
+      paginate(
+        reviewComment
+          ? `/{repo}/pulls/comments/${commentId}/reactions`
+          : `/{repo}/issues/comments/${commentId}/reactions`,
+        100
+      ),
     commitTree: sha => request('GET', `/{repo}/git/commits/${sha}`).then(r => r.data.tree.sha),
     repository: () => request('GET', '/{repo}').then(r => r.data),
+    compare: (base, head) =>
+      request(
+        'GET',
+        `/{repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+        { allow: [404] }
+      ).then(r => r.data),
+    checkRuns: sha =>
+      request('GET', `/{repo}/commits/${sha}/check-runs?per_page=100`, { allow: [404, 422] }).then(
+        r => r.data?.check_runs ?? []
+      ),
+    openPulls: (limit = 30) =>
+      paginate('/{repo}/pulls?state=open&sort=updated&direction=desc', limit),
+    closedPulls: (limit = 30) =>
+      paginate('/{repo}/pulls?state=closed&sort=updated&direction=desc', limit),
     async tree(ref) {
       const { data } = await request('GET', `/{repo}/git/trees/${ref}?recursive=1`);
       return data.tree.filter(entry => entry.type === 'blob').map(entry => entry.path);
+    },
+    async listDir(dirPath, ref) {
+      const clean = String(dirPath ?? '').replace(/^\/+|\/+$/g, '');
+      const encoded = clean ? clean.split('/').map(encodeURIComponent).join('/') : '';
+      const suffix = encoded ? `/${encoded}` : '';
+      const { data } = await request('GET', `/{repo}/contents${suffix}?ref=${ref}`, {
+        allow: [404],
+      });
+      if (!Array.isArray(data)) return [];
+      return data.map(entry => ({ name: entry.name, path: entry.path, type: entry.type }));
     },
     async fileAt(path, ref) {
       const encoded = path.split('/').map(encodeURIComponent).join('/');
@@ -69,6 +136,104 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
         allow: [404],
       });
       return data;
+    },
+    async externalFileAt(ownerRepo, filePath, ref = 'main') {
+      if (!/^[\w.-]+\/[\w.-]+$/.test(ownerRepo ?? '')) return null;
+      const encoded = filePath.split('/').map(encodeURIComponent).join('/');
+      const { data } = await request(
+        'GET',
+        `${API}/repos/${ownerRepo}/contents/${encoded}?ref=${encodeURIComponent(ref)}`,
+        { accept: 'application/vnd.github.raw+json', allow: [403, 404] }
+      );
+      return data;
+    },
+    async externalTree(ownerRepo, ref = 'main') {
+      if (!/^[\w.-]+\/[\w.-]+$/.test(ownerRepo ?? '')) return [];
+      const { data } = await request(
+        'GET',
+        `${API}/repos/${ownerRepo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+        { allow: [403, 404] }
+      );
+      return (data?.tree ?? []).filter(entry => entry.type === 'blob').map(entry => entry.path);
+    },
+    async searchCode(query, limit = 10) {
+      const q = `${query} repo:${repo}`;
+      const { data } = await request(
+        'GET',
+        `${API}/search/code?q=${encodeURIComponent(q)}&per_page=${Math.min(limit, 20)}`,
+        { allow: [403, 422] }
+      );
+      return (data?.items ?? []).map(item => ({ path: item.path, sha: item.sha }));
+    },
+    async searchIssues(query, limit = 10) {
+      const q = `${query} repo:${repo}`;
+      const { data } = await request(
+        'GET',
+        `${API}/search/issues?q=${encodeURIComponent(q)}&per_page=${Math.min(limit, 20)}`,
+        { allow: [403, 422] }
+      );
+      return (data?.items ?? []).map(item => ({
+        number: item.number,
+        title: item.title,
+        state: item.state,
+        isPr: Boolean(item.pull_request),
+        url: item.html_url,
+        created_at: item.created_at,
+        closed_at: item.closed_at,
+      }));
+    },
+    async upsertRepoFile({
+      targetRepo = repo,
+      filePath,
+      content,
+      branch,
+      message,
+    }) {
+      const encoded = filePath.split('/').map(encodeURIComponent).join('/');
+      const existing = await request(
+        'GET',
+        `${API}/repos/${targetRepo}/contents/${encoded}?ref=${encodeURIComponent(branch)}`,
+        { allow: [404] }
+      );
+      return request('PUT', `${API}/repos/${targetRepo}/contents/${encoded}`, {
+        body: {
+          message,
+          content: Buffer.from(content, 'utf8').toString('base64'),
+          branch,
+          ...(existing.data?.sha ? { sha: existing.data.sha } : {}),
+        },
+      });
+    },
+    async ensureBranch({ targetRepo = repo, branch, from = 'main' }) {
+      const existing = await request(
+        'GET',
+        `${API}/repos/${targetRepo}/git/ref/heads/${encodeURIComponent(branch)}`,
+        { allow: [404] }
+      );
+      if (existing.data) return existing.data;
+      const base = await request(
+        'GET',
+        `${API}/repos/${targetRepo}/git/ref/heads/${encodeURIComponent(from)}`
+      );
+      return request('POST', `${API}/repos/${targetRepo}/git/refs`, {
+        body: { ref: `refs/heads/${branch}`, sha: base.data.object.sha },
+      }).then(r => r.data);
+    },
+    async openOrUpdatePull({ targetRepo = repo, head, base = 'main', title, body }) {
+      const owner = targetRepo.split('/')[0];
+      const existing = await request(
+        'GET',
+        `${API}/repos/${targetRepo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${head}`)}`
+      );
+      const open = existing.data?.[0];
+      if (open) {
+        return request('PATCH', `${API}/repos/${targetRepo}/pulls/${open.number}`, {
+          body: { title, body },
+        }).then(r => r.data);
+      }
+      return request('POST', `${API}/repos/${targetRepo}/pulls`, {
+        body: { title, body, head, base },
+      }).then(r => r.data);
     },
     async upsertComment(number, existing, body) {
       // Another bot identity wrote the old comment and cannot be edited: post a new one.
