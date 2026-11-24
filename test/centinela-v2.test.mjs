@@ -21,13 +21,20 @@ import {
 import {
   applySuppressions,
   classifyScope,
+  distillSignalsWithAi,
   learningStacksFor,
   loadMultiProjectLearnings,
   planLearningUpdates,
   sanitizeSharedCandidate,
   selectLearningsForFiles,
 } from '../src/lib/learnings.mjs';
-import { issueSearchQuery, renderIssueAiComment, triageIssueWithAi } from '../src/lib/issues.mjs';
+import {
+  extractCitedLocations,
+  issueSearchQuery,
+  loadCitedCode,
+  renderIssueAiComment,
+  triageIssueWithAi,
+} from '../src/lib/issues.mjs';
 import { answerThread, isCentinelaMention, renderThreadReply } from '../src/lib/conversation.mjs';
 import { applyStack, detectPacks } from '../src/lib/packs.mjs';
 import { scaffoldForRepo } from '../src/cli-init.mjs';
@@ -690,4 +697,76 @@ test('runLearn opens local and shared multi-project learning PRs', async () => {
     writes.some(w => w[0] === 'pr' && w[1] === 'johnny4young/centinela-memory'),
     'routes stack learning PR to shared multi-project memory hub'
   );
+});
+
+test('AI distiller generalizes maintainer comments, issues read cited code on main, and dispatch dry-run parses', async () => {
+  const distilled = await distillSignalsWithAi({
+    model: {
+      messages: {
+        create: async () => ({
+          usage: { input_tokens: 200, output_tokens: 80 },
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                candidates: [
+                  {
+                    id: 'sqlite-blob-attachments',
+                    scope: 'stack',
+                    stacks: ['node-server'],
+                    paths: ['**/db/**'],
+                    category: 'performance',
+                    severity: 'maintainer',
+                    rule: 'Store binary payloads in SQLite as blob buffers rather than base64 text.',
+                    pattern: '',
+                    sourcePr: 526,
+                  },
+                ],
+              }),
+            },
+          ],
+        }),
+      },
+    },
+    signals: {
+      maintainerComments: [
+        { pr: 526, path: 'packages/server/src/db/schema/purchasing.ts', body: 'Please store as blob.' },
+      ],
+    },
+    stacks: ['node-server'],
+    config: defaults,
+  });
+  assert.equal(distilled.candidates.length, 1);
+  assert.equal(distilled.candidates[0].id, 'sqlite-blob-attachments');
+
+  const locs = extractCitedLocations(
+    'See `packages/server/src/trpc/routers/products/queries.ts:566-577` and `../bad.ts:1`.'
+  );
+  assert.deepEqual(locs, [
+    { file: 'packages/server/src/trpc/routers/products/queries.ts', start: 566, end: 577 },
+  ]);
+  const snippets = await loadCitedCode({
+    client: { fileAt: async () => Array.from({ length: 600 }, (_, i) => `line ${i + 1}`).join('\n') },
+    body: 'See packages/server/src/trpc/routers/products/queries.ts:566-570',
+    ref: 'main',
+    tracked: ['packages/server/src/trpc/routers/products/queries.ts'],
+  });
+  assert.equal(snippets.length, 1);
+  assert.match(snippets[0].slice, /566\| line 566/);
+
+  const tmpDir = await mkdtemp(path.join(tmpdir(), 'centinela-dispatch-'));
+  try {
+    const evt = path.join(tmpDir, 'event.json');
+    await writeFile(
+      evt,
+      JSON.stringify({ inputs: { mode: 'review', number: '526', dry_run: 'true' } })
+    );
+    const parsed = parseTarget([], { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_EVENT_PATH: evt });
+    assert.equal(parsed.kind, 'pr');
+    assert.equal(parsed.number, 526);
+    assert.equal(parsed.dryRun, true);
+    assert.equal(parsed.command.name, 'review');
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
 });

@@ -12,6 +12,8 @@
     "readyForMaintainer": { "name": "status: ready-for-maintainer", "color": "0e8a16" },
     "needsInfo": { "name": "needs-info", "color": "c5def5" },
     "aiReview": { "name": "centinela: ai-review", "color": "8b5cf6" },
+    "aiTriage": { "name": "centinela: triage", "color": "0ea5e9" },
+    "learn": { "name": "centinela: learn", "color": "14b8a6" },
     "size": {
       "XS": { "max": 10, "color": "3cbf00" },
       "S": { "max": 100, "color": "5d9801" },

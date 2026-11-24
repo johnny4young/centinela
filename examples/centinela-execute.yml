@@ -1,9 +1,11 @@
 name: Centinela Execute (Opt-in Tier 2)
 
-# Strictly separated from pull_request_target: only runs when a maintainer explicitly comments
-# `/centinela draft-pr` on an issue. Opens a Draft PR on a new branch, which is then reviewed
-# independently by the Control Plane (Tier 1) Centinela workflow.
+# Strictly separated from pull_request_target: only runs when a maintainer applies the
+# `centinela: draft-pr` label or comments `/centinela draft-pr` on an issue.
+# Opens a Draft PR on a new branch, which is then reviewed independently by Centinela Tier 1.
 on:
+  issues:
+    types: [labeled]
   issue_comment:
     types: [created]
 
@@ -13,10 +15,14 @@ jobs:
   draft-pr:
     name: Draft PR from issue
     if: >-
+      (github.event_name == 'issues' &&
+      github.event.label.name == 'centinela: draft-pr' &&
+      github.event.sender.type != 'Bot') ||
+      (github.event_name == 'issue_comment' &&
       github.event.issue.pull_request == null &&
       github.event.comment.user.type != 'Bot' &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
-      startsWith(github.event.comment.body, '/centinela draft-pr')
+      startsWith(github.event.comment.body, '/centinela draft-pr'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -28,12 +34,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Acknowledge command
+      - name: Acknowledge and remove trigger label
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
           COMMENT_ID: ${{ github.event.comment.id }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes
+          else
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/labels/centinela%3A%20draft-pr" || true
+          fi
       - name: Run autonomous implementation agent
         uses: anthropics/claude-code-action@v1
         with:

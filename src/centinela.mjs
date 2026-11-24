@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Autonomous triage, agentic review, issue management and self-learning for GitHub repos. */
-import { readFileSync, readdirSync } from 'node:fs';
+import { appendFileSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkIssue, checkPullRequest, sizeOf } from './lib/checks.mjs';
@@ -63,6 +63,7 @@ import {
 } from './lib/conversation.mjs';
 import {
   applySuppressions,
+  distillSignalsWithAi,
   harvestSignals,
   learningStacksFor,
   loadMultiProjectLearnings,
@@ -183,7 +184,38 @@ export function parseTarget(argv, env) {
     throw new Error('centinela: pass --pr <n> or --issue <n>, or run inside GitHub Actions');
   const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
   if (['schedule', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME)) {
-    return { kind: 'lifecycle', dryRun, force: false, configFile, action: null, ref: null };
+    const inputs = event.inputs ?? {};
+    const mode = String(inputs.mode ?? '').toLowerCase();
+    const num = Number(inputs.number) || null;
+    const dispatchDry = dryRun || inputs.dry_run === 'true' || inputs.dry_run === true;
+    if (mode === 'learn') {
+      return { kind: 'learn', dryRun: dispatchDry, force: dispatchDry, configFile, action: null, ref: null };
+    }
+    if (mode === 'review' && num) {
+      return {
+        kind: 'pr',
+        number: num,
+        dryRun: dispatchDry,
+        force: dispatchDry,
+        configFile,
+        action: null,
+        ref: env.GITHUB_SHA ?? null,
+        command: { name: 'review', manual: true, again: true, tier: 'deep', language: 'en' },
+      };
+    }
+    if (mode === 'triage' && num) {
+      return {
+        kind: 'issue',
+        number: num,
+        dryRun: dispatchDry,
+        force: dispatchDry,
+        configFile,
+        action: null,
+        ref: env.GITHUB_SHA ?? null,
+        command: { name: 'triage', manual: true, language: 'en' },
+      };
+    }
+    return { kind: 'lifecycle', dryRun: dispatchDry, force: false, configFile, action: null, ref: null };
   }
   if (env.GITHUB_EVENT_NAME === 'pull_request_review_comment') {
     return {
@@ -678,6 +710,7 @@ export async function triageIssue({
       rules,
       learnings: learned.learnings,
       tracked: stack.paths,
+      ref: baseRef,
       language,
       config,
     });
@@ -775,7 +808,7 @@ export async function runCommand({ command, options, kind, env = process.env }) 
     return react(triaged ? '+1' : 'confused');
   }
   if (command.name === 'learn') {
-    const learned = await runLearn({ options, openPr: !dryRun }).catch(error => {
+    const learned = await runLearn({ options, openPr: !dryRun, env }).catch(error => {
       log(`learning run failed: ${error.message}`);
       return null;
     });
@@ -1066,7 +1099,7 @@ export async function runConversation({
  * Self-learning pass: harvests maintainer reviews & feedback reactions, routes candidates to
  * local repo or shared multi-project memory, retires noisy rules, and opens/updates learning PRs.
  */
-export async function runLearn({ options, openPr = false }) {
+export async function runLearn({ options, openPr = false, env = process.env, model = null }) {
   const { client, config, dryRun, botLogin, repo, log } = options;
   const repoInfo = await client.repository().catch(() => ({ default_branch: 'main', private: false }));
   const baseBranch = repoInfo.default_branch ?? 'main';
@@ -1094,10 +1127,34 @@ export async function runLearn({ options, openPr = false }) {
     }
   }
 
+  let distilled = null;
+  if (signals.maintainerComments.length && (model || aiConfigured(env))) {
+    const existingLearnings = [
+      ...currentLocal.learnings,
+      ...[...currentShared.values()].flatMap(doc => doc.learnings),
+    ];
+    const activeModel = model ?? (await createModel(env));
+    const res = await distillSignalsWithAi({
+      model: activeModel,
+      signals,
+      existingLearnings,
+      stacks: activeStacks,
+      config,
+    }).catch(error => {
+      log(`AI distillation failed, falling back to heuristic routing: ${error.message}`);
+      return { candidates: null };
+    });
+    if (res.usage?.input) {
+      log(`learn distiller usage: ${res.usage.input} input, ${res.usage.output} output tokens`);
+    }
+    if (Array.isArray(res.candidates)) distilled = res.candidates;
+  }
+
   const plan = planLearningUpdates({
     currentLocal,
     currentShared,
     signals,
+    candidates: distilled,
     stacks: activeStacks,
     repo,
     isPrivate,
@@ -1193,7 +1250,11 @@ export async function runBackfill(options, { limit = 10, scan = 50 } = {}) {
 export async function runLifecycle({ client, config, dryRun, botLogin, log, now = Date.now() }) {
   const settings = config.lifecycle;
   // Created here so maintainers find the AI review label before its first use.
-  if (!dryRun) await client.ensureLabel(config.labels.aiReview);
+  if (!dryRun) {
+    for (const key of ['aiReview', 'aiTriage', 'learn']) {
+      if (config.labels[key]) await client.ensureLabel(config.labels[key]);
+    }
+  }
   if (!settings.remindAfterDays) return log('lifecycle reminders are off');
   const waiting = new Map();
   for (const label of [config.labels.waitingOnAuthor.name, config.labels.needsInfo.name]) {
@@ -1237,29 +1298,37 @@ export async function runLifecycle({ client, config, dryRun, botLogin, log, now 
   return actions;
 }
 
-/** Label events matter only for the opt-in, approval and bug labels, never the bot's own. */
+/** Label events matter only for opt-in, approval, bug and action-request labels. */
 export function relevantEvent(target, config) {
   if (target.action !== 'labeled' && target.action !== 'unlabeled') return true;
-  if (target.eventLabel === config.labels.aiReview.name) return target.action === 'labeled';
+  const requestLabels = [
+    config.labels.aiReview?.name,
+    config.labels.aiTriage?.name,
+    config.labels.learn?.name,
+  ].filter(Boolean);
+  if (requestLabels.includes(target.eventLabel)) return target.action === 'labeled';
   return [config.optInLabel, config.overrideLabel, config.issues.bugLabel].includes(
     target.eventLabel
   );
 }
 
-/**
- * The AI review label is a request: only people who can triage may apply it. Centinela reviews,
- * then removes the label so applying it again after a new commit asks once more.
- */
-export async function runLabeledAiReview(options) {
-  const { client, config, number, dryRun, log } = options;
+/** Runs a maintainer label-triggered action and removes the label afterwards. */
+export async function runLabeledAction(options, labelName, fn) {
+  const { client, number, dryRun, log } = options;
   try {
-    return await runAiReview({ options, again: true, tier: 'deep' });
+    return await fn();
   } catch (error) {
-    log(`AI review failed: ${error.message}`);
+    log(`labeled action (${labelName}) failed: ${error.message}`);
     return false;
   } finally {
-    if (!dryRun) await client.removeLabel(number, config.labels.aiReview.name);
+    if (!dryRun) await client.removeLabel(number, labelName);
   }
+}
+
+export async function runLabeledAiReview(options) {
+  return runLabeledAction(options, options.config.labels.aiReview.name, () =>
+    runAiReview({ options, again: true, tier: 'deep' })
+  );
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, log = console.log) {
@@ -1280,6 +1349,16 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     !relevantEvent(target, config)
   )
     return log(`label ${target.eventLabel} does not affect the review`);
+  const writeSummary = message => {
+    log(message);
+    if (target.dryRun && env.GITHUB_STEP_SUMMARY) {
+      try {
+        appendFileSync(env.GITHUB_STEP_SUMMARY, `${message}\n\n`);
+      } catch {
+        // Summary file is best-effort.
+      }
+    }
+  };
   const options = {
     client,
     config,
@@ -1294,17 +1373,17 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     force: target.force,
     ref: target.ref,
     repo,
-    log,
+    log: writeSummary,
   };
   if (target.kind === 'learn') {
-    return runLearn({ options, openPr: !target.dryRun });
+    return runLearn({ options, openPr: !target.dryRun, env });
   }
   if (target.kind === 'lifecycle') {
-    await runLifecycle({ client, config, dryRun: target.dryRun, botLogin, log });
+    await runLifecycle({ client, config, dryRun: target.dryRun, botLogin, log: writeSummary });
     await runBackfill(options);
     if (config.learnings?.weeklyPr && new Date().getUTCDay() === 1) {
-      await runLearn({ options, openPr: !target.dryRun }).catch(error =>
-        log(`weekly learning pass failed: ${error.message}`)
+      await runLearn({ options, openPr: !target.dryRun, env }).catch(error =>
+        writeSummary(`weekly learning pass failed: ${error.message}`)
       );
     }
     return;
@@ -1314,9 +1393,21 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
   if (
     target.kind === 'pr' &&
     target.action === 'labeled' &&
-    target.eventLabel === config.labels.aiReview.name
+    target.eventLabel === config.labels.aiReview?.name
   )
     return runLabeledAiReview(options);
+  if (
+    target.kind === 'issue' &&
+    target.action === 'labeled' &&
+    target.eventLabel === config.labels.aiTriage?.name
+  )
+    return runLabeledAction(options, config.labels.aiTriage.name, () =>
+      triageIssue({ ...options, runAi: true, env })
+    );
+  if (target.action === 'labeled' && target.eventLabel === config.labels.learn?.name)
+    return runLabeledAction(options, config.labels.learn.name, () =>
+      runLearn({ options, openPr: !target.dryRun, env })
+    );
   return target.kind === 'pr'
     ? triagePullRequest({ ...options, env })
     : triageIssue({ ...options, env });

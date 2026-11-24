@@ -67,6 +67,46 @@ export function issueSearchQuery(title = '') {
     .join(' ');
 }
 
+const CITED_LOCATION =
+  /(?<![\w./-])([a-zA-Z0-9_./-]+\.(?:[cm]?[jt]sx?|swift|go|rs|py|sql|sh)):(\d+)(?:-(\d+))?/g;
+
+/** Extracts unique `file:line` or `file:start-end` locations cited in an issue body. */
+export function extractCitedLocations(body = '', limit = 5) {
+  const seen = new Set();
+  const out = [];
+  for (const match of String(body).matchAll(CITED_LOCATION)) {
+    const file = match[1].replace(/^\/+/, '');
+    if (file.includes('..') || seen.has(`${file}:${match[2]}`)) continue;
+    seen.add(`${file}:${match[2]}`);
+    const start = Number(match[2]);
+    const end = match[3] ? Number(match[3]) : start;
+    out.push({ file, start, end: Math.max(start, end) });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** Reads bounded snippets from the default branch for `file:line` locations cited in an issue. */
+export async function loadCitedCode({ client, body, ref = 'main', tracked = [] }) {
+  if (!client?.fileAt) return [];
+  const known = tracked.length ? new Set(tracked) : null;
+  const refs = extractCitedLocations(body).filter(r => !known || known.has(r.file));
+  const snippets = [];
+  for (const loc of refs) {
+    const text = await client.fileAt(loc.file, ref).catch(() => null);
+    if (!text) continue;
+    const lines = text.split('\n');
+    const from = Math.max(1, loc.start - 12);
+    const to = Math.min(lines.length, Math.min(loc.end + 18, from + 70));
+    const slice = lines
+      .slice(from - 1, to)
+      .map((line, i) => `${String(from + i).padStart(5)}| ${line}`)
+      .join('\n');
+    snippets.push({ file: loc.file, from, to, slice });
+  }
+  return snippets;
+}
+
 /** Collects similar issues and recent merged PRs via GitHub API to spot duplicates & already-fixed bugs. */
 export async function collectIssueContext({ client, issue, config }) {
   const query = issueSearchQuery(issue.title);
@@ -99,12 +139,19 @@ export async function triageIssueWithAi({
   rules = [],
   learnings = [],
   tracked = [],
+  ref = 'main',
   language = 'en',
   config,
 }) {
-  const { similar, mergedPrs } = await collectIssueContext({ client, issue, config });
+  const [{ similar, mergedPrs }, citedCode] = await Promise.all([
+    collectIssueContext({ client, issue, config }),
+    loadCitedCode({ client, body: issue.body ?? '', ref, tracked }),
+  ]);
   const user = [
     `<issue number="${issue.number}">\nTitle: ${issue.title}\nAuthor: ${issue.user?.login ?? 'unknown'}\n\n${(issue.body ?? '').slice(0, 12_000)}\n</issue>`,
+    citedCode.length
+      ? `<cited_code_on_main>\n${citedCode.map(c => `--- ${c.file}:${c.from}-${c.to}\n${c.slice}`).join('\n\n')}\n</cited_code_on_main>`
+      : '',
     similar.length
       ? `<similar_items>\n${similar
           .map(s => {
