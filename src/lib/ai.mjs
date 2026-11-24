@@ -559,11 +559,12 @@ export async function verifyFindings({ model, prompt, findings = [], config }) {
   }));
   const response = await model.messages.create({
     model: verifierModel,
-    max_tokens: 4096,
+    max_tokens: 8192,
     system: config.ai.promptCaching !== false
       ? [{ type: 'text', text: VERIFIER_SYSTEM, cache_control: { type: 'ephemeral' } }]
       : VERIFIER_SYSTEM,
     output_config: {
+      effort: 'low',
       format: { type: 'json_schema', schema: VERIFIER_SCHEMA },
     },
     messages: [

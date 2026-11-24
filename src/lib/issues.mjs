@@ -10,8 +10,8 @@ export const ISSUE_TRIAGE_SCHEMA = {
       enum: ['user-bug', 'code-bug', 'feature', 'question', 'security', 'spam'],
     },
     labels: { type: 'array', items: { type: 'string' } },
-    duplicateOf: { type: ['integer', 'null'] },
-    fixedByPr: { type: ['integer', 'null'] },
+    duplicateOf: { type: 'integer' },
+    fixedByPr: { type: 'integer' },
     needsClarification: { type: 'boolean' },
     questions: { type: 'array', items: { type: 'string' } },
     relevantFiles: { type: 'array', items: { type: 'string' } },
@@ -43,8 +43,8 @@ Your job:
    - "security": potential vulnerability (flag immediately, never expose exploit details).
    - "spam": empty, promotional, or off-topic.
 2. Check <similar_items> and <recent_merged_prs> carefully:
-   - If another open/closed issue describes the exact same problem, set duplicateOf to its number.
-   - If a merged pull request already fixed this exact bug or shipped this exact change, set fixedByPr to that PR number and explain briefly in summary.
+   - If another open/closed issue describes the exact same problem, set duplicateOf to its number (or 0 if none).
+   - If a merged pull request already fixed this exact bug or shipped this exact change, set fixedByPr to that PR number (or 0 if none) and explain briefly in summary.
 3. Suggest only high-signal labels from: "bug", "enhancement", "question", "duplicate", "needs-info", or "area:<module>".
 4. Ask at most 2 concise, codebase-grounded clarification questions ONLY when critical reproduction or scope info is genuinely missing.
 5. When the contributor offers to open a PR or asks for implementation direction, write a crisp contributionBrief naming the exact files and project-rule invariants they must respect.
@@ -124,32 +124,43 @@ export async function triageIssueWithAi({
   const chosenModel = config.issues?.aiModel || config.ai?.fastModel || config.ai?.model;
   const response = await model.messages.create({
     model: chosenModel,
-    max_tokens: 2048,
+    max_tokens: 8192,
     system:
       config.ai?.promptCaching !== false
         ? [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }]
         : SYSTEM,
     output_config: {
+      effort: 'low',
       format: { type: 'json_schema', schema: ISSUE_TRIAGE_SCHEMA },
     },
     messages: [{ role: 'user', content: user }],
   });
-  const text = response.content?.find(b => b.type === 'text')?.text ?? '';
+  const usage = {
+    input: response.usage?.input_tokens ?? 0,
+    output: response.usage?.output_tokens ?? 0,
+  };
+  if (response.stop_reason === 'max_tokens') return { error: 'truncated', usage };
+  const text = (response.content?.find(b => b.type === 'text')?.text ?? '')
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '');
   try {
     const result = JSON.parse(text);
     const safeLabels = (result.labels ?? []).filter(
       l => ALLOWED_LABELS.has(l) || /^area:[a-z0-9-]+$/.test(l)
     );
     return {
-      result: { ...result, labels: [...new Set(safeLabels)].slice(0, 4) },
-      usage: {
-        input: response.usage?.input_tokens ?? 0,
-        output: response.usage?.output_tokens ?? 0,
+      result: {
+        ...result,
+        duplicateOf: result.duplicateOf > 0 ? result.duplicateOf : null,
+        fixedByPr: result.fixedByPr > 0 ? result.fixedByPr : null,
+        labels: [...new Set(safeLabels)].slice(0, 4),
       },
+      usage,
       model: response.model ?? chosenModel,
     };
   } catch {
-    return { error: 'unreadable' };
+    return { error: 'unreadable', stopReason: response.stop_reason, preview: text.slice(0, 120), usage };
   }
 }
 

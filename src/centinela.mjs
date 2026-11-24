@@ -681,6 +681,12 @@ export async function triageIssue({
       language,
       config,
     });
+    if (outcome.usage) {
+      log(`#${number} AI triage usage: ${outcome.usage.input} input, ${outcome.usage.output} output tokens`);
+    }
+    if (outcome.error) {
+      log(`#${number} AI triage failed: ${outcome.error}${outcome.stopReason ? ` (${outcome.stopReason})` : ''}${outcome.preview ? ` · ${outcome.preview}` : ''}`);
+    }
     if (outcome.result) {
       const commentBody = renderIssueAiComment({ issue, result: outcome.result, language });
       if (dryRun) {
@@ -697,6 +703,7 @@ export async function triageIssue({
       }
       return { findings, ai: outcome.result };
     }
+    if (runAi) return null;
   }
   return { findings };
 }

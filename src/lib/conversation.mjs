@@ -60,12 +60,13 @@ export async function answerThread({
   const chosenModel = config.conversation?.model || config.ai?.fastModel || config.ai?.model;
   const response = await model.messages.create({
     model: chosenModel,
-    max_tokens: 1024,
+    max_tokens: 4096,
     system:
       config.ai?.promptCaching !== false
         ? [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }]
         : SYSTEM,
     output_config: {
+      effort: 'low',
       format: { type: 'json_schema', schema: THREAD_REPLY_SCHEMA },
     },
     messages: [{ role: 'user', content: user }],
