@@ -12,6 +12,7 @@ export const ISSUE_TRIAGE_SCHEMA = {
     labels: { type: 'array', items: { type: 'string' } },
     duplicateOf: { type: 'integer' },
     fixedByPr: { type: 'integer' },
+    closeIfFixed: { type: 'boolean' },
     needsClarification: { type: 'boolean' },
     questions: { type: 'array', items: { type: 'string' } },
     relevantFiles: { type: 'array', items: { type: 'string' } },
@@ -23,6 +24,7 @@ export const ISSUE_TRIAGE_SCHEMA = {
     'labels',
     'duplicateOf',
     'fixedByPr',
+    'closeIfFixed',
     'needsClarification',
     'questions',
     'relevantFiles',
@@ -44,7 +46,7 @@ Your job:
    - "spam": empty, promotional, or off-topic.
 2. Check <similar_items> and <recent_merged_prs> carefully:
    - If another open/closed issue describes the exact same problem, set duplicateOf to its number (or 0 if none).
-   - If a merged pull request already fixed this exact bug or shipped this exact change, set fixedByPr to that PR number (or 0 if none) and explain briefly in summary.
+   - If a MERGED pull request already fixed this exact bug or shipped this exact change, set fixedByPr to that PR number (or 0 if none), set closeIfFixed to true, and explain briefly in summary. Never set closeIfFixed to true for an unmerged or open PR.
 3. Suggest only high-signal labels from: "bug", "enhancement", "question", "duplicate", "needs-info", or "area:<module>".
 4. Ask at most 2 concise, codebase-grounded clarification questions ONLY when critical reproduction or scope info is genuinely missing.
 5. When the contributor offers to open a PR or asks for implementation direction, write a crisp contributionBrief naming the exact files and project-rule invariants they must respect.
@@ -104,7 +106,17 @@ export async function triageIssueWithAi({
   const user = [
     `<issue number="${issue.number}">\nTitle: ${issue.title}\nAuthor: ${issue.user?.login ?? 'unknown'}\n\n${(issue.body ?? '').slice(0, 12_000)}\n</issue>`,
     similar.length
-      ? `<similar_items>\n${similar.map(s => `#${s.number} [${s.state}${s.isPr ? ' PR' : ' Issue'}]: ${s.title}`).join('\n')}\n</similar_items>`
+      ? `<similar_items>\n${similar
+          .map(s => {
+            const tag = s.isPr
+              ? s.merged
+                ? 'merged PR'
+                : `${s.state} PR`
+              : `${s.state} Issue`;
+            const snippet = s.body ? ` — ${s.body.replace(/\s+/g, ' ').slice(0, 180)}` : '';
+            return `#${s.number} [${tag}]: ${s.title}${snippet}`;
+          })
+          .join('\n')}\n</similar_items>`
       : '',
     mergedPrs.length
       ? `<recent_merged_prs>\n${mergedPrs.map(p => `#${p.number} (merged ${p.mergedAt.slice(0, 10)}): ${p.title}`).join('\n')}\n</recent_merged_prs>`
@@ -178,16 +190,20 @@ const clean = (text = '', max = 900) =>
     .replace(/</g, '&lt;')
     .trim();
 
-export function renderIssueAiComment({ issue, result, language = 'en' }) {
+export function renderIssueAiComment({ issue, result, closed = false, language = 'en' }) {
   const es = language === 'es';
   const out = [`${ISSUE_AI_MARKER} key=${issueAiKey(issue)} -->`];
   out.push(clean(result.summary, 900), '');
 
   if (result.fixedByPr) {
     out.push(
-      es
-        ? `**Posiblemente ya resuelto:** parece que la PR #${result.fixedByPr} ya atendió esto en la rama principal. Si el problema sigue ocurriendo en la última versión, por favor comente abajo.`
-        : `**Likely already fixed:** PR #${result.fixedByPr} appears to have addressed this on the default branch. If you can still reproduce it on the latest build, please reply below.`,
+      closed
+        ? es
+          ? `**Resuelto y cerrado:** la PR mergeada #${result.fixedByPr} ya atendió esto en la rama principal. Si el problema sigue ocurriendo en la última versión, comente aquí y lo reabriremos.`
+          : `**Resolved and closed:** merged PR #${result.fixedByPr} already addressed this on the default branch. If you can still reproduce it on the latest build, comment here and we will reopen it.`
+        : es
+          ? `**Posiblemente ya resuelto:** parece que la PR #${result.fixedByPr} ya atendió esto en la rama principal. Si el problema sigue ocurriendo en la última versión, por favor comente abajo.`
+          : `**Likely already fixed:** PR #${result.fixedByPr} appears to have addressed this on the default branch. If you can still reproduce it on the latest build, please reply below.`,
       ''
     );
   }

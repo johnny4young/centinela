@@ -135,7 +135,8 @@
     "aiModel": "claude-sonnet-5-5",
     "autoLabel": true,
     "detectDuplicates": true,
-    "detectFixedInMain": true
+    "detectFixedInMain": true,
+    "autoCloseFixed": true
   },
   "links": {
     "security": null,

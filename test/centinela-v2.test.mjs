@@ -490,6 +490,8 @@ test('smart AI issue triage detects already-fixed PRs and applies safe auto-labe
         body: 'Resolves duplicate barcode lookup deterministically.',
       },
     ],
+    pull: async n => (n === 503 ? { number: 503, merged: true, merged_at: '2026-11-17T05:00:00Z' } : null),
+    close: async (n, pull, reason) => writes.push(['close', n, pull, reason]),
     upsertComment: async (n, ex, body) => writes.push(['comment', body]),
     ensureLabel: async def => writes.push(['ensureLabel', def.name]),
     addLabels: async (n, labels) => writes.push(['addLabels', labels]),
@@ -506,13 +508,14 @@ test('smart AI issue triage detects already-fixed PRs and applies safe auto-labe
             text: JSON.stringify({
               kind: 'code-bug',
               labels: ['bug', 'area:products', 'unsafe label with spaces'],
-              duplicateOf: null,
+              duplicateOf: 0,
               fixedByPr: 503,
+              closeIfFixed: true,
               needsClarification: false,
               questions: [],
               relevantFiles: ['packages/server/src/db/schema/products.ts'],
               contributionBrief: '',
-              summary: 'Deterministic barcode resolution appears to have landed in PR #503.',
+              summary: 'Deterministic barcode resolution landed in merged PR #503.',
             }),
           },
         ],
@@ -531,9 +534,11 @@ test('smart AI issue triage detects already-fixed PRs and applies safe auto-labe
     log: () => {},
   });
   assert.equal(res.ai.fixedByPr, 503);
+  assert.equal(res.closed, true);
   assert.deepEqual(res.ai.labels, ['bug', 'area:products']);
   const posted = writes.find(w => w[0] === 'comment')[1];
-  assert.match(posted, /Likely already fixed.*#503/);
+  assert.match(posted, /Resolved and closed.*#503/);
+  assert.deepEqual(writes.find(w => w[0] === 'close'), ['close', 501, false, 'completed']);
   assert.deepEqual(writes.find(w => w[0] === 'addLabels')[1], ['bug', 'area:products']);
 });
 

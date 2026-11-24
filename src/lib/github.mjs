@@ -177,6 +177,9 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
         title: item.title,
         state: item.state,
         isPr: Boolean(item.pull_request),
+        merged: Boolean(item.pull_request?.merged_at),
+        merged_at: item.pull_request?.merged_at ?? null,
+        body: (item.body ?? '').slice(0, 300),
         url: item.html_url,
         created_at: item.created_at,
         closed_at: item.closed_at,
@@ -254,9 +257,9 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
       request('POST', `/{repo}/issues/comments/${commentId}/reactions`, { body: { content } }),
     comment: (number, body) =>
       request('POST', `/{repo}/issues/${number}/comments`, { body: { body } }),
-    close: (number, pull) =>
+    close: (number, pull, reason = 'not_planned') =>
       request('PATCH', `/{repo}/issues/${number}`, {
-        body: pull ? { state: 'closed' } : { state: 'closed', state_reason: 'not_planned' },
+        body: pull ? { state: 'closed' } : { state: 'closed', state_reason: reason },
       }),
     setStatus: (sha, state, description) =>
       request('POST', `/{repo}/statuses/${sha}`, {

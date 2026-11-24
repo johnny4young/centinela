@@ -688,9 +688,26 @@ export async function triageIssue({
       log(`#${number} AI triage failed: ${outcome.error}${outcome.stopReason ? ` (${outcome.stopReason})` : ''}${outcome.preview ? ` · ${outcome.preview}` : ''}`);
     }
     if (outcome.result) {
-      const commentBody = renderIssueAiComment({ issue, result: outcome.result, language });
+      // Never auto-close on model output alone: confirm through the API that the PR is actually merged.
+      let shouldClose = false;
+      if (
+        outcome.result.fixedByPr &&
+        outcome.result.closeIfFixed &&
+        config.issues?.autoCloseFixed !== false &&
+        client.pull
+      ) {
+        const fixingPr = await client.pull(outcome.result.fixedByPr).catch(() => null);
+        shouldClose = Boolean(fixingPr?.merged || fixingPr?.merged_at);
+      }
+      const commentBody = renderIssueAiComment({
+        issue,
+        result: outcome.result,
+        closed: shouldClose,
+        language,
+      });
       if (dryRun) {
         log(commentBody);
+        if (shouldClose) log(`#${number} would close as completed (fixed by #${outcome.result.fixedByPr})`);
       } else {
         await client.upsertComment(number, existingAi, commentBody);
         if (config.issues?.autoLabel !== false && outcome.result.labels?.length) {
@@ -700,8 +717,12 @@ export async function triageIssue({
           }
           if (toAdd.length) await client.addLabels(number, toAdd);
         }
+        if (shouldClose && client.close) {
+          await client.close(number, false, 'completed');
+          log(`#${number} closed as completed (fixed by merged PR #${outcome.result.fixedByPr})`);
+        }
       }
-      return { findings, ai: outcome.result };
+      return { findings, ai: outcome.result, closed: shouldClose };
     }
     if (runAi) return null;
   }
