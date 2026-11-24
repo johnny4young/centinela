@@ -81,8 +81,11 @@
   },
   "ai": {
     "model": "claude-opus-5-5",
-    "effort": "high",
-    "maxInputTokens": 150000
+    "effort": "xhigh",
+    "maxInputTokens": 150000,
+    "maxFileTokens": 60000,
+    "rules": ["AGENTS.md", "CLAUDE.md"],
+    "inline": true
   },
   "lifecycle": {
     "remindAfterDays": 14,

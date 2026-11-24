@@ -46,6 +46,10 @@ export function resolveConfig(project = {}) {
     throw new Error('centinela: ai.effort must be low, medium, high, xhigh or max');
   if (!(Number.isInteger(config.ai.maxInputTokens) && config.ai.maxInputTokens > 0))
     throw new Error('centinela: ai.maxInputTokens must be a positive number');
+  if (!(Number.isInteger(config.ai.maxFileTokens) && config.ai.maxFileTokens >= 0))
+    throw new Error('centinela: ai.maxFileTokens must be zero or a positive number');
+  if (!Array.isArray(config.ai.rules) || !config.ai.rules.every(p => typeof p === 'string'))
+    throw new Error('centinela: ai.rules must be a list of repository paths');
   for (const key of ['remindAfterDays', 'closeAfterDays']) {
     const days = config.lifecycle[key];
     if (days !== null && !(Number.isInteger(days) && days > 0))

@@ -40,12 +40,13 @@ Centinela reacciona con 👀 al empezar y con 👍 al terminar. Los comentarios 
 
 ## Revisión con IA
 
-Un mantenedor aplica la etiqueta `centinela: ai-review` a una pull request, o comenta `/centinela review`, para que Claude revise el diff en busca de congelamientos, fugas de memoria, problemas de rendimiento y errores claros. El resultado es un comentario aparte en el idioma del autor, que se actualiza con cada pedido. Centinela quita la etiqueta al terminar, así que volver a aplicarla después de un commit nuevo pide otra revisión; con el comentario, `--again` revisa el mismo commit otra vez.
+Un mantenedor aplica la etiqueta `centinela: ai-review` a una pull request, o comenta `/centinela review`, para que Claude haga una revisión profunda: primero congelamientos, fugas de memoria y rendimiento; después errores y casos borde, seguridad, parches que esconden un problema, desvíos de sus reglas escritas, pruebas que faltan o no prueban nada, y duplicación. Lee el diff, la versión completa de los archivos modificados y las reglas del proyecto. Los hallazgos que caen en una línea modificada se publican como comentarios sobre esa línea, en una revisión que solo comenta y nunca pide cambios; el resto, con un resumen, va en un comentario aparte en el idioma del autor. Centinela quita la etiqueta al terminar, así que volver a aplicarla después de un commit nuevo pide otra revisión; con el comentario, `--again` revisa el mismo commit otra vez.
 
 - Solo los mantenedores pueden pedirla y corre una vez por commit, así que el gasto queda en sus manos.
 - El diff y la descripción se pasan como datos no confiables, el modelo no tiene herramientas y sus hallazgos nunca cambian el estado de Centinela.
-- Lee `AGENTS.md` o `CLAUDE.md` de la rama base como reglas del proyecto.
-- Un diff por encima de `ai.maxInputTokens` (150.000 por defecto) no se envía.
+- Lee los archivos de `ai.rules` (`AGENTS.md` y `CLAUDE.md` por defecto) de la rama base como reglas del proyecto.
+- Los archivos completos se agregan hasta `ai.maxFileTokens` (60.000 por defecto); un diff por encima de `ai.maxInputTokens` (150.000) no se envía. Revisar una pull request mediana cuesta algunas decenas de centavos de dólar.
+- Una revisión posterior nunca repite un comentario en línea que ya publicó.
 
 Se autentica con [federación de identidad](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions), sin guardar ninguna API key; la configuración está en el [README en inglés](./README.md#ai-review).
 

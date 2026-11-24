@@ -33,9 +33,15 @@ import {
   askClaude,
   buildPrompt,
   createModel,
+  inlineComment,
+  loadFileContents,
   loadProjectRules,
+  planInline,
+  postedFingerprints,
   readAiHead,
   renderAiComment,
+  reviewBody,
+  validFindings,
 } from './lib/ai.mjs';
 import { lastActivity, lifecycleAction, lifecycleComment, reminderAt } from './lib/lifecycle.mjs';
 
@@ -543,12 +549,28 @@ export async function runAiReview({ options, again = false, env = process.env, m
   }
   const [files, rules, stack] = await Promise.all([
     client.pullFiles(number),
-    loadProjectRules({ client, ref: pr.base.sha }),
+    // The base branch tip: trusted, and newer than the commit the pull request started from.
+    loadProjectRules({ client, ref: pr.base.ref, paths: config.ai.rules }),
     detectStack({ client, ref: pr.base.sha, setting: config.stack, legacy: config.rules }),
   ]);
-  const prompt = buildPrompt({ pr, files, rules, stack: stack.packs, language, config });
+  const contents = await loadFileContents({
+    client,
+    files,
+    head: pr.head.sha,
+    config,
+    budget: config.ai.maxFileTokens * 2.3,
+  });
+  const prompt = buildPrompt({
+    pr,
+    files,
+    rules,
+    contents,
+    stack: stack.packs,
+    language,
+    config,
+  });
   log(
-    `#${number} AI review prompt: ~${prompt.tokens} tokens, ${prompt.files.length} files${rules ? `, rules from ${rules.file}` : ''}`
+    `#${number} AI review prompt: ~${prompt.tokens} tokens, ${prompt.files.length} files, ${prompt.fullFiles} in full${rules.length ? `, rules from ${rules.map(r => r.file).join(', ')}` : ''}`
   );
   if (dryRun && !model) return { prompt };
   if (!prompt.tooLarge && !model && !aiConfigured(env)) {
@@ -560,6 +582,37 @@ export async function runAiReview({ options, again = false, env = process.env, m
     : await askClaude({ model: model ?? (await createModel(env)), prompt, config });
   if (outcome.usage)
     log(`usage: ${outcome.usage.input} input, ${outcome.usage.output} output tokens`);
+  // Findings that sit on a diff line go out as one review; a later review never repeats them.
+  let inline = [];
+  if (outcome.result) {
+    const plan = planInline({
+      findings: validFindings(outcome.result, prompt.files),
+      files,
+      posted: dryRun
+        ? new Set()
+        : postedFingerprints(await client.reviewComments(number), botLogin),
+      enabled: config.ai.inline,
+    });
+    inline = plan.inline;
+    if (inline.length && !dryRun) {
+      await client
+        .createReview(number, {
+          commit_id: pr.head.sha,
+          event: 'COMMENT',
+          body: reviewBody(inline.length, language),
+          comments: inline.map(f => ({
+            path: f.file,
+            line: f.line,
+            side: 'RIGHT',
+            body: inlineComment(f, language),
+          })),
+        })
+        .catch(error => {
+          log(`inline review failed, keeping every finding in the summary: ${error.message}`);
+          inline = [];
+        });
+    }
+  }
   const body = renderAiComment({
     head: pr.head.sha,
     language,
@@ -567,13 +620,15 @@ export async function runAiReview({ options, again = false, env = process.env, m
     outcome,
     files: prompt.files,
     tokens: prompt.tokens,
+    inline,
   });
   if (dryRun) {
     log(body);
-    return { prompt, outcome };
+    for (const f of inline) log(`inline ${f.file}:${f.line}\n${inlineComment(f, language)}`);
+    return { prompt, outcome, inline };
   }
   await client.upsertComment(number, existing, body);
-  return { prompt, outcome };
+  return { prompt, outcome, inline };
 }
 
 /**

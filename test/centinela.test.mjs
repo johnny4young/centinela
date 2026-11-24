@@ -1773,7 +1773,8 @@ test('the AI review prompt marks contributed text as untrusted and respects the 
   const prompt = buildPrompt({
     pr,
     files,
-    rules: { file: 'AGENTS.md', text: 'Every query scopes by tenantId.' },
+    rules: [{ file: 'AGENTS.md', text: 'Every query scopes by tenantId.' }],
+    contents: new Map([['apps/web/src/Sales.tsx', 'const x = 1;\nexport default x;']]),
     stack: ['react'],
     language: 'es',
     config: defaults,
@@ -1791,11 +1792,14 @@ test('the AI review prompt marks contributed text as untrusted and respects the 
   );
   assert.match(prompt.user, /usted register/);
   assert.equal(prompt.tooLarge, false);
-  const small = resolveConfig({ ai: { maxInputTokens: 10 } });
-  assert.equal(
-    buildPrompt({ pr, files, rules: null, stack: [], language: 'en', config: small }).tooLarge,
-    true
+  assert.equal(prompt.fullFiles, 1);
+  assert.match(
+    prompt.user,
+    /<file path="apps\/web\/src\/Sales.tsx">\n {4}1\| const x = 1;\n {4}2\| export default x;/
   );
+  assert.match(prompt.system, /hack: workarounds/);
+  const small = resolveConfig({ ai: { maxInputTokens: 10 } });
+  assert.equal(buildPrompt({ pr, files, stack: [], language: 'en', config: small }).tooLarge, true);
   assert.throws(() => resolveConfig({ ai: { effort: 'huge' } }), /ai.effort/);
 });
 
@@ -1868,24 +1872,52 @@ test('an AI review runs once per head for maintainers and never touches the stat
   const model = {
     beta: {
       messages: {
-        create: async request => {
+        stream: request => {
           calls.push(request);
           return {
-            model: 'claude-opus-5-5',
-            stop_reason: 'end_turn',
-            usage: { input_tokens: 900, output_tokens: 120 },
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({ summary: 'Looks fine.', findings: [] }),
-              },
-            ],
+            finalMessage: async () => ({
+              model: 'claude-opus-5-5',
+              stop_reason: 'end_turn',
+              usage: { input_tokens: 900, output_tokens: 120 },
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    summary: 'One freeze.',
+                    findings: [
+                      {
+                        file: 'docs/a.md',
+                        line: 1,
+                        category: 'freeze',
+                        severity: 'maintainer',
+                        title: 'Blocks the main thread',
+                        detail: 'Use the async version.',
+                      },
+                      {
+                        file: 'docs/a.md',
+                        line: 40,
+                        category: 'tests',
+                        severity: 'suggestion',
+                        title: 'Not covered',
+                        detail: 'Add a test.',
+                      },
+                    ],
+                  }),
+                },
+              ],
+            }),
           };
         },
       },
     },
   };
-  const client = fakeClient({ pr });
+
+  const withReviews = (client, previous = []) => {
+    client.reviewComments = async () => previous;
+    client.createReview = async (number, review) => client.writes.push(['review', review]);
+    return client;
+  };
+  const client = withReviews(fakeClient({ pr }));
   const first = await runAiReview({ options: options(client), model });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].output_config.format.type, 'json_schema');
@@ -1895,14 +1927,32 @@ test('an AI review runs once per head for maintainers and never touches the stat
   const comment = client.writes.find(w => w[0] === 'comment');
   assert.match(comment[2], /^<!-- centinela-ai head=abc123 -->/);
   assert.ok(!client.writes.some(w => w[0] === 'status'), 'the AI review never sets the status');
+  const review = client.writes.find(w => w[0] === 'review')[1];
+  assert.equal(review.event, 'COMMENT');
+  assert.equal(review.commit_id, 'abc123');
+  assert.deepEqual(
+    review.comments.map(c => [c.path, c.line, c.side]),
+    [['docs/a.md', 1, 'RIGHT']],
+    'only findings on a diff line go inline'
+  );
+  assert.match(
+    review.comments[0].body,
+    /^\*\*Freeze\*\* · For a maintainer · Blocks the main thread/
+  );
+  assert.match(comment[2], /One finding is on the lines they refer to/);
+  assert.match(comment[2], /`docs\/a.md:40` · Tests: \*\*Not covered\*\* Add a test\./);
+  assert.doesNotMatch(comment[2], /Blocks the main thread\*\* Use the async/);
 
   const posted = [{ id: 3, user: { type: 'Bot' }, body: comment[2] }];
-  const again = fakeClient({ pr, comments: posted });
+  const again = withReviews(fakeClient({ pr, comments: posted }), [
+    { user: { type: 'Bot' }, body: review.comments[0].body },
+  ]);
   await runAiReview({ options: options(again), model });
   assert.equal(calls.length, 1, 'the same head is not reviewed twice');
   await runAiReview({ options: options(again), model, again: true });
   assert.equal(calls.length, 2);
   assert.equal(again.writes.find(w => w[0] === 'comment')[1], 3, 'it updates its own comment');
+  assert.ok(!again.writes.some(w => w[0] === 'review'), 'an inline finding is never posted twice');
 
   const command = (login, association) => ({
     name: 'review',
@@ -1977,4 +2027,10 @@ test('the AI review label asks for a review once and is removed afterwards', asy
     outcome: { result: { summary: 'Nothing to flag.', findings: [] } },
   });
   assert.doesNotMatch(clean, /No performance, memory or freeze problems/);
+});
+
+test('inline comments only land on lines the diff shows', async () => {
+  const { commentableLines } = await import('../src/lib/ai.mjs');
+  const lines = commentableLines('@@ -10,3 +10,4 @@\n keep\n-old\n+new\n+added\n keep');
+  assert.deepEqual([...lines], [10, 11, 12, 13]);
 });

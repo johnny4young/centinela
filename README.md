@@ -40,12 +40,13 @@ Centinela reacts with 👀 when it starts and 👍 when it finishes. Comments fr
 
 ## AI review
 
-A maintainer applies the `centinela: ai-review` label to a pull request, or comments `/centinela review`, to have Claude review the diff for freezes, memory leaks, performance problems and clear bugs. The result is a separate comment in the author's language, updated on each request. Centinela removes the label when it finishes, so applying it again after a new commit asks for another review; with the comment, `--again` reviews the same commit once more.
+A maintainer applies the `centinela: ai-review` label to a pull request, or comments `/centinela review`, to have Claude do a deep review: freezes, memory leaks and performance first, then bugs and edge cases, security, workarounds that hide a problem, departures from your written rules, missing or hollow tests, and duplication. It reads the diff, the full new version of the changed files and your project rules. Findings that sit on a changed line are posted as review comments on that line, in a review that only comments and never requests changes; the rest, with a summary, go in a separate comment in the author's language. Centinela removes the label when it finishes, so applying it again after a new commit asks for another review; with the comment, `--again` reviews the same commit once more.
 
 - Only maintainers can ask for it, and it runs once per commit, so its cost stays in your hands.
 - The diff and description are passed as untrusted data, the model has no tools, and its findings never change the Centinela status.
-- It reads `AGENTS.md` or `CLAUDE.md` from the base branch as project rules.
-- A diff above `ai.maxInputTokens` (150,000 by default) is not sent.
+- It reads the files in `ai.rules` (`AGENTS.md` and `CLAUDE.md` by default) from the base branch as project rules.
+- Full files are added up to `ai.maxFileTokens` (60,000 by default); a diff above `ai.maxInputTokens` (150,000) is not sent. A review of a mid-sized pull request costs a few tens of cents.
+- A later review never repeats an inline comment it already posted.
 
 It authenticates with [workload identity federation](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions), so no API key is stored. In the Claude Console, connect a GitHub Actions workload whose rule matches `ref` `refs/heads/main`, the `Centinela` workflow and the `pull_request_target` and `issue_comment` events, then set the four IDs as repository variables and add `id-token: write` to the job, as in [examples/centinela.yml](./examples/centinela.yml):
 
@@ -106,7 +107,8 @@ The exception is `paths.sensitive`, which always keeps the built-in floor (workf
 | `rules.custom`                                           | Your own rules; see [Project rules](#project-rules)                                         |
 | `deps`                                                   | Minimum release age in days and blocked license prefixes                                    |
 | `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                             |
-| `ai.model`, `effort`, `maxInputTokens`                   | Model, effort and input limit for `/centinela review`                                       |
+| `ai.model`, `effort`, `rules`, `inline`                  | Model, effort (`xhigh`), rule files and inline comments for the AI review                   |
+| `ai.maxInputTokens`, `maxFileTokens`                     | Input limit, and how much of it full files may use                                          |
 | `lifecycle.remindAfterDays`, `closeAfterDays`            | Days before the reminder (`null` turns it off) and before closing after it (off by default) |
 | `links.security`, `rules`, `contributing`                | Repository paths, one string or one per language, linked from the comment                   |
 | `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                             |
