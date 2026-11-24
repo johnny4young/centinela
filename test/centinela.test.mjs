@@ -1837,6 +1837,15 @@ test('the AI comment keeps findings on changed files and strips mentions, images
   assert.match(body, /- `src\/a.ts:12` · Freeze: \*\*Sync read in the main process\*\*/);
   assert.doesNotMatch(body, /Invented file/);
   assert.doesNotMatch(body, /@someone|!\[|<img/);
+  const code = renderAiComment({
+    head: 'abc1234',
+    language: 'en',
+    model: 'claude-opus-5-5',
+    outcome: {
+      result: { summary: 'Assert on `<td class="x">4</td>` instead of <b>bold</b>.', findings: [] },
+    },
+  });
+  assert.match(code, /`<td class="x">4<\/td>` instead of &lt;b>bold&lt;\/b>/);
   assert.match(body, /never changes the Centinela status/);
   const es = renderAiComment({
     head: 'abc1234',

@@ -222,13 +222,21 @@ export async function askClaude({ model, prompt, config }) {
 }
 
 // Model output is shown to everyone on the pull request: no mentions, images or raw HTML.
+// Code spans stay literal, since GitHub never renders HTML inside them.
 const clean = (text = '', max = 700) =>
   String(text)
     .slice(0, max)
-    .replace(/@(?=\w)/g, '@​')
-    .replace(/!\[/g, '[')
-    .replace(/</g, '&lt;')
     .replace(/\s*\n\s*/g, ' ')
+    .split(/(`[^`]*`)/)
+    .map(part =>
+      part.startsWith('`') && part.endsWith('`') && part.length > 1
+        ? part
+        : part
+            .replace(/@(?=\w)/g, '@\u200b')
+            .replace(/!\[/g, '[')
+            .replace(/</g, '&lt;')
+    )
+    .join('')
     .trim();
 
 const codeRef = f => `\`${f.file.replace(/`/g, "'")}${f.line > 0 ? `:${f.line}` : ''}\``;
