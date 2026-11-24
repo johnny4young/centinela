@@ -46,6 +46,7 @@ import {
   triagePullRequest,
   relevantEvent,
   runAiReview,
+  runBackfill,
   runCommand,
   runLabeledAiReview,
   runLifecycle,
@@ -2042,4 +2043,108 @@ test('inline comments only land on lines the diff shows', async () => {
   const { commentableLines } = await import('../src/lib/ai.mjs');
   const lines = commentableLines('@@ -10,3 +10,4 @@\n keep\n-old\n+new\n+added\n keep');
   assert.deepEqual([...lines], [10, 11, 12, 13]);
+});
+
+test('related files follow relative and @/ imports to tracked files', async () => {
+  const { importSpecifiers, resolveImport, loadRelatedFiles } = await import('../src/lib/ai.mjs');
+  const source = [
+    "import { a } from './helpers.js';",
+    "import type { B } from '@/lib/types';",
+    "export * from '../shared';",
+    "const lazy = await import('./lazy');",
+    "import React from 'react';",
+  ].join('\n');
+  assert.deepEqual(importSpecifiers(source).sort(), [
+    '../shared',
+    './helpers.js',
+    './lazy',
+    '@/lib/types',
+  ]);
+  const tracked = new Set([
+    'apps/web/src/features/helpers.ts',
+    'apps/web/src/lib/types.ts',
+    'apps/web/src/shared/index.ts',
+  ]);
+  const from = 'apps/web/src/features/Page.tsx';
+  assert.equal(resolveImport(from, './helpers.js', tracked), 'apps/web/src/features/helpers.ts');
+  assert.equal(resolveImport(from, '@/lib/types', tracked), 'apps/web/src/lib/types.ts');
+  assert.equal(resolveImport(from, '../shared', tracked), 'apps/web/src/shared/index.ts');
+  assert.equal(resolveImport(from, './lazy', tracked), null);
+
+  const related = await loadRelatedFiles({
+    client: { fileAt: async file => `// ${file}` },
+    contents: new Map([[from, source]]),
+    files: [{ filename: from }, { filename: 'apps/web/src/lib/types.ts' }],
+    tracked,
+    head: 'h',
+    config: defaults,
+  });
+  assert.deepEqual([...related.keys()].sort(), [
+    'apps/web/src/features/helpers.ts',
+    'apps/web/src/shared/index.ts',
+  ]);
+});
+
+test('one-click suggestions go out only when the whole range is on the diff', async () => {
+  const { reviewComment, commentableLines } = await import('../src/lib/ai.mjs');
+  const lines = commentableLines('@@ -1,2 +1,4 @@\n a\n+b\n+c\n d');
+  const finding = {
+    file: 'src/a.ts',
+    startLine: 2,
+    line: 3,
+    category: 'correctness',
+    severity: 'suggestion',
+    title: 'Off by one',
+    detail: 'Use <=.',
+    suggestion: 'const b = 1;\nconst c = 2;\n',
+  };
+  const multi = reviewComment(finding, lines, 'en');
+  assert.equal(multi.start_line, 2);
+  assert.equal(multi.start_side, 'RIGHT');
+  assert.match(multi.body, /```suggestion\nconst b = 1;\nconst c = 2;\n```/);
+
+  const outside = reviewComment({ ...finding, startLine: 1, line: 3 }, new Set([2, 3]), 'en');
+  assert.equal(outside.start_line, undefined);
+  assert.doesNotMatch(outside.body, /```suggestion/, 'a partial range never replaces lines');
+
+  const fenced = reviewComment({ ...finding, startLine: 0, suggestion: '```\nx' }, lines, 'en');
+  assert.doesNotMatch(fenced.body, /```suggestion/);
+});
+
+test('the daily run reviews open contributions Centinela never saw', async () => {
+  process.env.TYPOS_BIN = '/nonexistent/typos';
+  const pr = {
+    number: 9,
+    state: 'open',
+    draft: false,
+    title: 'docs(readme): fix wording',
+    body: BODY,
+    user: { login: 'ana' },
+    author_association: 'CONTRIBUTOR',
+    labels: [],
+    head: { sha: 'h1' },
+    base: { sha: 'b1' },
+  };
+  const client = fakeClient({ pr });
+  client.openItems = async () => [
+    { number: 9, user: { login: 'ana' }, author_association: 'CONTRIBUTOR', pull_request: {} },
+    { number: 8, user: { login: 'johnny4young' }, author_association: 'OWNER', pull_request: {} },
+    { number: 7, user: { login: 'bo' }, author_association: 'NONE', draft: true, pull_request: {} },
+  ];
+  const reviewed = await runBackfill({
+    client,
+    config,
+    dryRun: false,
+    force: false,
+    repo: 'o/r',
+    version: 'v1',
+    botLogin: null,
+    log: () => {},
+  });
+  assert.equal(reviewed, 1);
+  assert.ok(client.writes.some(w => w[0] === 'comment'));
+  assert.deepEqual(
+    client.writes.find(w => w[0] === 'status'),
+    ['status', 'h1', 'success']
+  );
 });

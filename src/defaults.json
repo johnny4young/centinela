@@ -84,6 +84,7 @@
     "effort": "xhigh",
     "maxInputTokens": 150000,
     "maxFileTokens": 60000,
+    "maxRelatedTokens": 20000,
     "rules": ["AGENTS.md", "CLAUDE.md"],
     "inline": true
   },

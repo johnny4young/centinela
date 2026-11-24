@@ -40,7 +40,7 @@ Centinela reacts with 👀 when it starts and 👍 when it finishes. Comments fr
 
 ## AI review
 
-A maintainer applies the `centinela: ai-review` label to a pull request, or comments `/centinela review`, to have Claude do a deep review: freezes, memory leaks and performance first, then bugs and edge cases, security, workarounds that hide a problem, departures from your written rules, missing or hollow tests, and duplication. It reads the diff, the full new version of the changed files and your project rules. Findings that sit on a changed line are posted as review comments on that line, in a review that only comments and never requests changes; the rest, with a summary, go in a separate comment in the author's language. Centinela removes the label when it finishes, so applying it again after a new commit asks for another review; with the comment, `--again` reviews the same commit once more.
+A maintainer applies the `centinela: ai-review` label to a pull request, or comments `/centinela review`, to have Claude do a deep review: freezes, memory leaks and performance first, then bugs and edge cases, security, workarounds that hide a problem, departures from your written rules, missing or hollow tests, and duplication. It reads the diff, the full new version of the changed files, the unchanged files they import (relative and `@/` imports) and your project rules. Findings that sit on a changed line are posted as review comments on that line, in a review that only comments and never requests changes, with a one-click suggestion when the fix is a small edit of those lines; the rest, with a summary, go in a separate comment in the author's language. Centinela removes the label when it finishes, so applying it again after a new commit asks for another review; with the comment, `--again` reviews the same commit once more.
 
 - Only maintainers can ask for it, and it runs once per commit, so its cost stays in your hands.
 - The diff and description are passed as untrusted data, the model has no tools, and its findings never change the Centinela status.
@@ -59,7 +59,7 @@ gh variable set ANTHROPIC_WORKSPACE_ID --body wrkspc_...
 
 A dedicated workspace with a monthly spend limit caps what reviews can cost.
 
-Once a day it looks at items waiting on their author (`status: waiting-on-author` or `needs-info`). After `lifecycle.remindAfterDays` without activity from the author (14 by default) it posts one reminder in the author's language. Closing is off by default; set `lifecycle.closeAfterDays` to close the item that many days after the reminder, with a message that invites the author to come back. Approved items, items waiting on a maintainer, drafts and maintainer items are never touched.
+Once a day it also gives a first review to open contributions it never saw, such as those opened before Centinela was installed, up to ten per run. It looks at items waiting on their author (`status: waiting-on-author` or `needs-info`). After `lifecycle.remindAfterDays` without activity from the author (14 by default) it posts one reminder in the author's language. Closing is off by default; set `lifecycle.closeAfterDays` to close the item that many days after the reminder, with a message that invites the author to come back. Approved items, items waiting on a maintainer, drafts and maintainer items are never touched.
 
 ## How it stays safe
 
@@ -108,7 +108,7 @@ The exception is `paths.sensitive`, which always keeps the built-in floor (workf
 | `deps`                                                   | Minimum release age in days and blocked license prefixes                                    |
 | `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                             |
 | `ai.model`, `effort`, `rules`, `inline`                  | Model, effort (`xhigh`), rule files and inline comments for the AI review                   |
-| `ai.maxInputTokens`, `maxFileTokens`                     | Input limit, and how much of it full files may use                                          |
+| `ai.maxInputTokens`, `maxFileTokens`, `maxRelatedTokens` | Input limit, and how much of it changed and imported files may use                          |
 | `lifecycle.remindAfterDays`, `closeAfterDays`            | Days before the reminder (`null` turns it off) and before closing after it (off by default) |
 | `links.security`, `rules`, `contributing`                | Repository paths, one string or one per language, linked from the comment                   |
 | `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                             |

@@ -35,12 +35,14 @@ import {
   createModel,
   inlineComment,
   loadFileContents,
+  loadRelatedFiles,
   loadProjectRules,
   planInline,
   postedFingerprints,
   readAiHead,
   renderAiComment,
   reviewBody,
+  reviewComment,
   validFindings,
 } from './lib/ai.mjs';
 import { lastActivity, lifecycleAction, lifecycleComment, reminderAt } from './lib/lifecycle.mjs';
@@ -560,17 +562,27 @@ export async function runAiReview({ options, again = false, env = process.env, m
     config,
     budget: config.ai.maxFileTokens * 2.3,
   });
+  const tracked = stack.paths?.length ? stack.paths : await client.tree(pr.base.sha);
+  const related = await loadRelatedFiles({
+    client,
+    contents,
+    files,
+    tracked,
+    head: pr.head.sha,
+    config,
+  });
   const prompt = buildPrompt({
     pr,
     files,
     rules,
     contents,
+    related,
     stack: stack.packs,
     language,
     config,
   });
   log(
-    `#${number} AI review prompt: ~${prompt.tokens} tokens, ${prompt.files.length} files, ${prompt.fullFiles} in full${rules.length ? `, rules from ${rules.map(r => r.file).join(', ')}` : ''}`
+    `#${number} AI review prompt: ~${prompt.tokens} tokens, ${prompt.files.length} files, ${prompt.fullFiles} in full, ${prompt.relatedFiles} related${rules.length ? `, rules from ${rules.map(r => r.file).join(', ')}` : ''}`
   );
   if (dryRun && !model) return { prompt };
   if (!prompt.tooLarge && !model && !aiConfigured(env)) {
@@ -594,18 +606,14 @@ export async function runAiReview({ options, again = false, env = process.env, m
       enabled: config.ai.inline,
     });
     inline = plan.inline;
+    const lines = plan.lines;
     if (inline.length && !dryRun) {
       await client
         .createReview(number, {
           commit_id: pr.head.sha,
           event: 'COMMENT',
           body: reviewBody(inline.length, language),
-          comments: inline.map(f => ({
-            path: f.file,
-            line: f.line,
-            side: 'RIGHT',
-            body: inlineComment(f, language),
-          })),
+          comments: inline.map(f => reviewComment(f, lines.get(f.file), language)),
         })
         .catch(error => {
           log(`inline review failed, keeping every finding in the summary: ${error.message}`);
@@ -629,6 +637,34 @@ export async function runAiReview({ options, again = false, env = process.env, m
   }
   await client.upsertComment(number, existing, body);
   return { prompt, outcome, inline };
+}
+
+/**
+ * Open items from outside contributors that Centinela never reviewed, such as those opened
+ * before it was installed. A few per day keep the run short.
+ */
+export async function runBackfill(options, { limit = 10, scan = 50 } = {}) {
+  const { client, config, botLogin, log } = options;
+  let reviewed = 0;
+  for (const item of (await client.openItems()).slice(0, scan)) {
+    if (reviewed >= limit) break;
+    const author = item.user?.login;
+    if (
+      item.draft ||
+      config.skipAuthors.includes(author) ||
+      MAINTAINER_ASSOCIATIONS.has(item.author_association) ||
+      config.maintainers.includes(author)
+    )
+      continue;
+    if (ownComment(await client.comments(item.number), botLogin)) continue;
+    const triage = item.pull_request ? triagePullRequest : triageIssue;
+    await triage({ ...options, number: item.number, action: null }).catch(error =>
+      log(`#${item.number} backfill failed: ${error.message}`)
+    );
+    reviewed++;
+  }
+  log(`backfill: ${reviewed} item(s) reviewed for the first time`);
+  return reviewed;
 }
 
 /**
@@ -719,9 +755,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
   const client = createClient({ token, repo, statusContext: config.statusContext });
   const botLogin =
     env.CENTINELA_BOT_LOGIN || (env.GITHUB_ACTIONS === 'true' ? 'github-actions[bot]' : null);
-  if (target.kind === 'lifecycle')
-    return runLifecycle({ client, config, dryRun: target.dryRun, botLogin, log });
-  if (!relevantEvent(target, config))
+  if (target.kind !== 'lifecycle' && !relevantEvent(target, config))
     return log(`label ${target.eventLabel} does not affect the review`);
   const options = {
     client,
@@ -739,6 +773,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     repo,
     log,
   };
+  if (target.kind === 'lifecycle') {
+    await runLifecycle({ client, config, dryRun: target.dryRun, botLogin, log });
+    return runBackfill(options);
+  }
   if (target.command) return runCommand({ command: target.command, options, kind: target.kind });
   if (
     target.kind === 'pr' &&

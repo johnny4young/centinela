@@ -81,6 +81,7 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
       }
       return request('POST', `/{repo}/issues/${number}/comments`, { body: { body } });
     },
+    openItems: () => paginate('/{repo}/issues?state=open&sort=created&direction=desc', 100),
     timeline: number => paginate(`/{repo}/issues/${number}/timeline`, 1000),
     waitingOn: label =>
       paginate(`/{repo}/issues?state=open&labels=${encodeURIComponent(label)}`, 500),
