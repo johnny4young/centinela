@@ -25,7 +25,18 @@ import {
   helpText,
   knownCommand,
   parseCommand,
+  wantsAgain,
 } from './lib/commands.mjs';
+import {
+  AI_MARKER,
+  aiConfigured,
+  askClaude,
+  buildPrompt,
+  createModel,
+  loadProjectRules,
+  readAiHead,
+  renderAiComment,
+} from './lib/ai.mjs';
 import { lastActivity, lifecycleAction, lifecycleComment, reminderAt } from './lib/lifecycle.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -77,6 +88,15 @@ export function parseTarget(argv, env) {
   const force = dryRun && argv.includes('--force');
   const manual = { dryRun, force, configFile, action: null, ref: null };
   if (argv.includes('--lifecycle')) return { kind: 'lifecycle', ...manual };
+  // A manual AI review; with --dry-run it only reports the prompt size and calls nothing.
+  if (flag('--pr') && argv.includes('--review')) {
+    return {
+      kind: 'pr',
+      number: flag('--pr'),
+      ...manual,
+      command: { name: 'review', manual: true, again: argv.includes('--again'), language: 'en' },
+    };
+  }
   if (flag('--pr')) return { kind: 'pr', number: flag('--pr'), ...manual };
   if (flag('--issue')) return { kind: 'issue', number: flag('--issue'), ...manual };
   if (!env.GITHUB_EVENT_PATH)
@@ -101,6 +121,7 @@ export function parseTarget(argv, env) {
         association: event.comment?.author_association,
         bot: event.comment?.user?.type === 'Bot',
         itemAuthor: event.issue.user?.login,
+        again: wantsAgain(event.comment?.body),
         language: detectLanguage(event.comment?.body ?? ''),
       },
     };
@@ -473,6 +494,7 @@ export async function triageIssue({
  */
 export async function runCommand({ command, options, kind }) {
   const { client, config, dryRun, log } = options;
+  if (command.manual) return runAiReview({ options, again: command.again });
   if (!command.name || command.bot) return log('no Centinela command in this comment');
   if (!canRun({ ...command, config }))
     return log(`${command.login} may not run Centinela commands here`);
@@ -485,10 +507,73 @@ export async function runCommand({ command, options, kind }) {
       : client.comment(options.number, helpText(command.language));
   }
   await react('eyes');
+  if (command.name === 'review') {
+    if (kind !== 'pr') return react('confused');
+    const reviewed = await runAiReview({ options, again: command.again }).catch(error => {
+      log(`AI review failed: ${error.message}`);
+      return null;
+    });
+    return react(reviewed ? '+1' : 'confused');
+  }
   const triage = kind === 'pr' ? triagePullRequest : triageIssue;
   const result = await triage({ ...options, recheck: true });
   await react('+1');
   return result;
+}
+
+/**
+ * A Claude review of the pull request diff, posted as its own comment and kept apart from the
+ * status: model output never approves or blocks. Once per head unless asked again.
+ */
+export async function runAiReview({ options, again = false, env = process.env, model = null }) {
+  const { client, config, number, dryRun, botLogin, log } = options;
+  const pr = await client.pull(number);
+  if (pr.state !== 'open' && !options.force) return log(`#${number} is ${pr.state}; no AI review`);
+  const language = detectLanguage(pr.title, pr.body ?? '');
+  const existing =
+    (await client.comments(number)).findLast(
+      c =>
+        c.user?.type === 'Bot' &&
+        (!botLogin || c.user.login === botLogin) &&
+        c.body?.startsWith(AI_MARKER)
+    ) ?? null;
+  if (existing && readAiHead(existing.body) === pr.head.sha && !again) {
+    log(`#${number} already has an AI review for ${pr.head.sha}`);
+    return true;
+  }
+  const [files, rules, stack] = await Promise.all([
+    client.pullFiles(number),
+    loadProjectRules({ client, ref: pr.base.sha }),
+    detectStack({ client, ref: pr.base.sha, setting: config.stack, legacy: config.rules }),
+  ]);
+  const prompt = buildPrompt({ pr, files, rules, stack: stack.packs, language, config });
+  log(
+    `#${number} AI review prompt: ~${prompt.tokens} tokens, ${prompt.files.length} files${rules ? `, rules from ${rules.file}` : ''}`
+  );
+  if (dryRun && !model) return { prompt };
+  if (!prompt.tooLarge && !model && !aiConfigured(env)) {
+    log('the Claude API is not configured; set the federation variables or ANTHROPIC_API_KEY');
+    return false;
+  }
+  const outcome = prompt.tooLarge
+    ? { tooLarge: true }
+    : await askClaude({ model: model ?? (await createModel(env)), prompt, config });
+  if (outcome.usage)
+    log(`usage: ${outcome.usage.input} input, ${outcome.usage.output} output tokens`);
+  const body = renderAiComment({
+    head: pr.head.sha,
+    language,
+    model: outcome.model ?? config.ai.model,
+    outcome,
+    files: prompt.files,
+    tokens: prompt.tokens,
+  });
+  if (dryRun) {
+    log(body);
+    return { prompt, outcome };
+  }
+  await client.upsertComment(number, existing, body);
+  return { prompt, outcome };
 }
 
 /**

@@ -78,6 +78,11 @@
     "minAgeDays": 14,
     "blockedLicenses": ["GPL", "AGPL", "LGPL", "SSPL"]
   },
+  "ai": {
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "maxInputTokens": 150000
+  },
   "lifecycle": {
     "remindAfterDays": 14,
     "closeAfterDays": null

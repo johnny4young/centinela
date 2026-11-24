@@ -38,6 +38,26 @@ The author or a maintainer can comment on a pull request or issue:
 
 Centinela reacts with 👀 when it starts and 👍 when it finishes. Comments from anyone else are ignored.
 
+## AI review
+
+A maintainer can comment `/centinela review` on a pull request to have Claude review the diff for freezes, memory leaks, performance problems and clear bugs. The result is a separate comment in the author's language, updated on each request; `--again` reviews the same commit once more.
+
+- Only maintainers can ask for it, and it runs once per commit, so its cost stays in your hands.
+- The diff and description are passed as untrusted data, the model has no tools, and its findings never change the Centinela status.
+- It reads `AGENTS.md` or `CLAUDE.md` from the base branch as project rules.
+- A diff above `ai.maxInputTokens` (150,000 by default) is not sent.
+
+It authenticates with [workload identity federation](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions), so no API key is stored. In the Claude Console, connect a GitHub Actions workload whose rule matches `ref` `refs/heads/main`, the `Centinela` workflow and the `pull_request_target` and `issue_comment` events, then set the four IDs as repository variables and add `id-token: write` to the job, as in [examples/centinela.yml](./examples/centinela.yml):
+
+```bash
+gh variable set ANTHROPIC_FEDERATION_RULE_ID --body fdrl_...
+gh variable set ANTHROPIC_ORGANIZATION_ID --body <organization-id>
+gh variable set ANTHROPIC_SERVICE_ACCOUNT_ID --body svac_...
+gh variable set ANTHROPIC_WORKSPACE_ID --body wrkspc_...
+```
+
+A dedicated workspace with a monthly spend limit caps what reviews can cost.
+
 Once a day it looks at items waiting on their author (`status: waiting-on-author` or `needs-info`). After `lifecycle.remindAfterDays` without activity from the author (14 by default) it posts one reminder in the author's language. Closing is off by default; set `lifecycle.closeAfterDays` to close the item that many days after the reminder, with a message that invites the author to come back. Approved items, items waiting on a maintainer, drafts and maintainer items are never touched.
 
 ## How it stays safe
@@ -86,6 +106,7 @@ The exception is `paths.sensitive`, which always keeps the built-in floor (workf
 | `rules.custom`                                           | Your own rules; see [Project rules](#project-rules)                                         |
 | `deps`                                                   | Minimum release age in days and blocked license prefixes                                    |
 | `issues.productName`, `bugLabel`                         | Names used in bug report checks                                                             |
+| `ai.model`, `effort`, `maxInputTokens`                   | Model, effort and input limit for `/centinela review`                                       |
 | `lifecycle.remindAfterDays`, `closeAfterDays`            | Days before the reminder (`null` turns it off) and before closing after it (off by default) |
 | `links.security`, `rules`, `contributing`                | Repository paths, one string or one per language, linked from the comment                   |
 | `labels`, `optInLabel`, `overrideLabel`, `statusContext` | Names and colors Centinela uses                                                             |
@@ -146,7 +167,8 @@ GITHUB_REPOSITORY=owner/repo GH_TOKEN=$(gh auth token) \
   node src/centinela.mjs --dry-run --force --pr 123 --config path/to/centinela.json
 ```
 
-`npm test` runs the suite. Centinela uses Node.js built-ins only.
+`npm test` runs the suite. Add `--review` to see the size of the AI review prompt; with `--dry-run` it calls nothing.
+Centinela uses Node.js built-ins plus the official Claude SDK, which is installed only when the AI review is configured.
 
 ## Versions
 

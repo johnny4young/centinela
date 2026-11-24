@@ -38,6 +38,17 @@ El autor o un mantenedor pueden comentar en una pull request o un issue:
 
 Centinela reacciona con 👀 al empezar y con 👍 al terminar. Los comentarios de cualquier otra persona se ignoran.
 
+## Revisión con IA
+
+Un mantenedor puede comentar `/centinela review` en una pull request para que Claude revise el diff en busca de congelamientos, fugas de memoria, problemas de rendimiento y errores claros. El resultado es un comentario aparte en el idioma del autor, que se actualiza con cada pedido; `--again` revisa el mismo commit otra vez.
+
+- Solo los mantenedores pueden pedirla y corre una vez por commit, así que el gasto queda en sus manos.
+- El diff y la descripción se pasan como datos no confiables, el modelo no tiene herramientas y sus hallazgos nunca cambian el estado de Centinela.
+- Lee `AGENTS.md` o `CLAUDE.md` de la rama base como reglas del proyecto.
+- Un diff por encima de `ai.maxInputTokens` (150.000 por defecto) no se envía.
+
+Se autentica con [federación de identidad](https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions), sin guardar ninguna API key; la configuración está en el [README en inglés](./README.md#ai-review).
+
 Una vez al día revisa lo que espera al autor (`status: waiting-on-author` o `needs-info`). Tras `lifecycle.remindAfterDays` sin actividad del autor (14 por defecto) publica un único recordatorio en su idioma. El cierre está apagado por defecto; con `lifecycle.closeAfterDays` cierra la contribución esos días después del recordatorio, con un mensaje que invita a retomarla. Nunca toca contribuciones aprobadas, que esperan a un mantenedor, borradores ni las de mantenedores.
 
 ## Cómo se mantiene seguro
@@ -84,7 +95,8 @@ GITHUB_REPOSITORY=owner/repo GH_TOKEN=$(gh auth token) \
   node src/centinela.mjs --dry-run --force --pr 123 --config ruta/a/centinela.json
 ```
 
-`npm test` ejecuta las pruebas. Centinela usa solo módulos nativos de Node.js.
+`npm test` ejecuta las pruebas. Agregue `--review` para ver el tamaño del prompt de la revisión con IA; con `--dry-run` no llama a nada.
+Centinela usa módulos nativos de Node.js y el SDK oficial de Claude, que solo se instala cuando la revisión con IA está configurada.
 
 ## Versiones
 

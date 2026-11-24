@@ -25,6 +25,22 @@ inputs:
     description: Check added lines for typos with crate-ci/typos.
     required: false
     default: 'true'
+  anthropic-federation-rule-id:
+    description: Federation rule for the Claude API (workload identity). Enables /centinela review; the job needs id-token write.
+    required: false
+    default: ''
+  anthropic-organization-id:
+    description: Anthropic organization ID for the federation rule.
+    required: false
+    default: ''
+  anthropic-service-account-id:
+    description: Service account the federation rule maps to.
+    required: false
+    default: ''
+  anthropic-workspace-id:
+    description: Workspace the AI review bills to.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -39,6 +55,12 @@ runs:
       with:
         node-version: ${{ steps.node.outputs.version }}
         check-latest: true
+
+    - name: Install the Claude SDK
+      if: ${{ inputs.anthropic-federation-rule-id != '' }}
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci --ignore-scripts --omit=dev --no-audit --no-fund
 
     - name: Install typos
       if: ${{ inputs.typos == 'true' }}
@@ -78,4 +100,8 @@ runs:
         GITHUB_TOKEN: ${{ steps.app.outputs.token || inputs.github-token }}
         CENTINELA_BOT_LOGIN: ${{ steps.app.outputs.app-slug && format('{0}[bot]', steps.app.outputs.app-slug) || 'github-actions[bot]' }}
         CENTINELA_REQUIRE_TYPOS: ${{ inputs.typos == 'true' && '1' || '0' }}
+        ANTHROPIC_FEDERATION_RULE_ID: ${{ inputs.anthropic-federation-rule-id }}
+        ANTHROPIC_ORGANIZATION_ID: ${{ inputs.anthropic-organization-id }}
+        ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ inputs.anthropic-service-account-id }}
+        ANTHROPIC_WORKSPACE_ID: ${{ inputs.anthropic-workspace-id }}
       run: node "$GITHUB_ACTION_PATH/src/centinela.mjs"

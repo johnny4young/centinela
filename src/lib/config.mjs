@@ -42,6 +42,10 @@ export function resolveConfig(project = {}) {
   if (sections !== 'template' && !Array.isArray(sections))
     throw new Error('centinela: pullRequest.sections must be "template" or a list of sections');
   config.rules.custom = (config.rules.custom ?? []).map(validateRule);
+  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(config.ai.effort))
+    throw new Error('centinela: ai.effort must be low, medium, high, xhigh or max');
+  if (!(Number.isInteger(config.ai.maxInputTokens) && config.ai.maxInputTokens > 0))
+    throw new Error('centinela: ai.maxInputTokens must be a positive number');
   for (const key of ['remindAfterDays', 'closeAfterDays']) {
     const days = config.lifecycle[key];
     if (days !== null && !(Number.isInteger(days) && days > 0))

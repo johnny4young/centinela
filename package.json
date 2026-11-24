@@ -1,6 +1,6 @@
 {
   "name": "centinela",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Polite first-pass review of pull requests and issues from outside contributors.",
   "license": "MIT",
@@ -10,5 +10,8 @@
   },
   "scripts": {
     "test": "node --test test/"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.6.0"
   }
 }

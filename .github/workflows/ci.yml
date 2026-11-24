@@ -24,6 +24,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           check-latest: true
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
       - name: Validate the default config
         run: node -e "import('./src/lib/config.mjs').then(m => m.resolveConfig({}))"
