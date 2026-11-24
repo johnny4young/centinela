@@ -82,8 +82,12 @@ export function checkSize(ctx) {
 export function checkDescription(ctx) {
   const results = [];
   const rules = ctx.config.pullRequest;
-  if (rules.conventionalTitle && !CONVENTIONAL_TITLE.test(ctx.title))
-    results.push(finding('title', 'blocking', { title: ctx.title }));
+  // A pasted title can carry a line break; GitHub shows it but commit subjects break on it.
+  const multiline = /[\r\n]/.test(ctx.title.trim());
+  const title = ctx.title.replace(/\s+/g, ' ').trim();
+  if (multiline) results.push(finding('title-lines', 'blocking', { title }));
+  if (rules.conventionalTitle && !CONVENTIONAL_TITLE.test(title))
+    results.push(finding('title', 'blocking', { title }));
   const parsed = sections(ctx.body ?? '');
   const required = Array.isArray(rules.sections) ? rules.sections : [];
   const missing = required.filter(({ names }) => !section(parsed, names));

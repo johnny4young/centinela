@@ -38,6 +38,7 @@ const MESSAGES = {
   en: {
     title: p =>
       `The title ${code(p.title)} does not follow Conventional Commits, e.g. ${code('fix(parser): keep empty lines')}.`,
+    'title-lines': p => `Please put the title on one line: ${code(p.title)}.`,
     description: p =>
       `Please fill in these sections of the pull request template: ${sectionNames(p, 'en')}.`,
     size: p =>
@@ -135,6 +136,7 @@ const MESSAGES = {
   es: {
     title: p =>
       `El título ${code(p.title)} no sigue Conventional Commits; por ejemplo: ${code('fix(parser): conserva las líneas vacías')}.`,
+    'title-lines': p => `Por favor escriba el título en una sola línea: ${code(p.title)}.`,
     description: p =>
       `Por favor complete estas secciones de la plantilla: ${sectionNames(p, 'es')}.`,
     size: p =>
