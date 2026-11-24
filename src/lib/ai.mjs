@@ -1,7 +1,8 @@
 import { matcher } from './core.mjs';
 
 export const AI_MARKER = '<!-- centinela-ai';
-const CHARS_PER_TOKEN = 3.5;
+// Measured on real pull requests: code and Spanish run about 2.4 characters per token.
+const CHARS_PER_TOKEN = 2.3;
 const MAX_RULES_CHARS = 20_000;
 const MAX_FINDINGS = 25;
 const RULE_FILES = ['AGENTS.md', 'CLAUDE.md'];
@@ -235,7 +236,7 @@ export function renderAiComment({ head, language, model, outcome, files = [], to
   else {
     const findings = validFindings(outcome.result, files);
     if (outcome.result?.summary) out.push(clean(outcome.result.summary, 800), '');
-    if (!findings.length) out.push(text.clean);
+    if (!findings.length && !outcome.result?.summary) out.push(text.clean);
     for (const severity of ['maintainer', 'suggestion']) {
       const items = findings.filter(f => f.severity === severity);
       if (!items.length) continue;

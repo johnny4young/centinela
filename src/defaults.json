@@ -9,6 +9,7 @@
     "waitingOnAuthor": { "name": "status: waiting-on-author", "color": "fbca04" },
     "needsMaintainer": { "name": "status: needs-maintainer", "color": "d93f0b" },
     "needsInfo": { "name": "needs-info", "color": "c5def5" },
+    "aiReview": { "name": "centinela: ai-review", "color": "8b5cf6" },
     "size": {
       "XS": { "max": 10, "color": "3cbf00" },
       "S": { "max": 100, "color": "5d9801" },

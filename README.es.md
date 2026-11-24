@@ -40,7 +40,7 @@ Centinela reacciona con 👀 al empezar y con 👍 al terminar. Los comentarios 
 
 ## Revisión con IA
 
-Un mantenedor puede comentar `/centinela review` en una pull request para que Claude revise el diff en busca de congelamientos, fugas de memoria, problemas de rendimiento y errores claros. El resultado es un comentario aparte en el idioma del autor, que se actualiza con cada pedido; `--again` revisa el mismo commit otra vez.
+Un mantenedor aplica la etiqueta `centinela: ai-review` a una pull request, o comenta `/centinela review`, para que Claude revise el diff en busca de congelamientos, fugas de memoria, problemas de rendimiento y errores claros. El resultado es un comentario aparte en el idioma del autor, que se actualiza con cada pedido. Centinela quita la etiqueta al terminar, así que volver a aplicarla después de un commit nuevo pide otra revisión; con el comentario, `--again` revisa el mismo commit otra vez.
 
 - Solo los mantenedores pueden pedirla y corre una vez por commit, así que el gasto queda en sus manos.
 - El diff y la descripción se pasan como datos no confiables, el modelo no tiene herramientas y sus hallazgos nunca cambian el estado de Centinela.

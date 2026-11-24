@@ -47,6 +47,7 @@ import {
   relevantEvent,
   runAiReview,
   runCommand,
+  runLabeledAiReview,
   runLifecycle,
 } from '../src/centinela.mjs';
 import {
@@ -890,6 +891,7 @@ test('the example workflow filters the same labels the defaults use', () => {
   assert.doesNotMatch(workflow, /actions\/checkout/, 'the caller must never check out PR code');
   assert.match(workflow, /startsWith\(github\.event\.comment\.body, '\/centinela'\)/);
   assert.match(workflow, /schedule:/);
+  assert.match(workflow, new RegExp(`label.name == '${defaults.labels.aiReview.name}'`));
 });
 
 test('bug titles are recognized by everyday wording in both languages', () => {
@@ -1735,6 +1737,7 @@ test('items waiting on their author get one reminder and, if enabled, a polite c
           ]
         : [item(1)],
     timeline: async number => timelines[number],
+    ensureLabel: async () => {},
     comment: async (number, body) => writes.push(['comment', number, body]),
     close: async (number, pull) => writes.push(['close', number, pull]),
   };
@@ -1940,4 +1943,38 @@ test('the Actions OIDC token is requested for the Claude API audience', async ()
       ACTIONS_ID_TOKEN_REQUEST_URL: 'https://gh.example',
     })
   );
+});
+
+test('the AI review label asks for a review once and is removed afterwards', async () => {
+  const ai = defaults.labels.aiReview.name;
+  assert.ok(relevantEvent({ action: 'labeled', eventLabel: ai }, defaults));
+  assert.ok(!relevantEvent({ action: 'unlabeled', eventLabel: ai }, defaults));
+  const pr = {
+    number: 9,
+    state: 'open',
+    title: 'perf(sales): faster totals',
+    body: BODY,
+    user: { login: 'ana' },
+    head: { sha: 'abc123' },
+    base: { sha: 'b1' },
+  };
+  const client = fakeClient({ pr });
+  const result = await runLabeledAiReview({
+    client,
+    config,
+    number: 9,
+    dryRun: false,
+    botLogin: null,
+    log: () => {},
+  });
+  assert.equal(result, false, 'without credentials nothing is sent');
+  assert.deepEqual(client.writes.at(-1), ['remove', ai]);
+
+  const clean = renderAiComment({
+    head: 'abc1234',
+    language: 'en',
+    model: 'claude-opus-5-5',
+    outcome: { result: { summary: 'Nothing to flag.', findings: [] } },
+  });
+  assert.doesNotMatch(clean, /No performance, memory or freeze problems/);
 });

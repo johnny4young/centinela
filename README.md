@@ -40,7 +40,7 @@ Centinela reacts with 👀 when it starts and 👍 when it finishes. Comments fr
 
 ## AI review
 
-A maintainer can comment `/centinela review` on a pull request to have Claude review the diff for freezes, memory leaks, performance problems and clear bugs. The result is a separate comment in the author's language, updated on each request; `--again` reviews the same commit once more.
+A maintainer applies the `centinela: ai-review` label to a pull request, or comments `/centinela review`, to have Claude review the diff for freezes, memory leaks, performance problems and clear bugs. The result is a separate comment in the author's language, updated on each request. Centinela removes the label when it finishes, so applying it again after a new commit asks for another review; with the comment, `--again` reviews the same commit once more.
 
 - Only maintainers can ask for it, and it runs once per commit, so its cost stays in your hands.
 - The diff and description are passed as untrusted data, the model has no tools, and its findings never change the Centinela status.

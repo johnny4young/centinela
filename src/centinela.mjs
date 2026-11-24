@@ -582,6 +582,8 @@ export async function runAiReview({ options, again = false, env = process.env, m
  */
 export async function runLifecycle({ client, config, dryRun, botLogin, log, now = Date.now() }) {
   const settings = config.lifecycle;
+  // Created here so maintainers find the AI review label before its first use.
+  if (!dryRun) await client.ensureLabel(config.labels.aiReview);
   if (!settings.remindAfterDays) return log('lifecycle reminders are off');
   const waiting = new Map();
   for (const label of [config.labels.waitingOnAuthor.name, config.labels.needsInfo.name]) {
@@ -628,9 +630,26 @@ export async function runLifecycle({ client, config, dryRun, botLogin, log, now 
 /** Label events matter only for the opt-in, approval and bug labels, never the bot's own. */
 export function relevantEvent(target, config) {
   if (target.action !== 'labeled' && target.action !== 'unlabeled') return true;
+  if (target.eventLabel === config.labels.aiReview.name) return target.action === 'labeled';
   return [config.optInLabel, config.overrideLabel, config.issues.bugLabel].includes(
     target.eventLabel
   );
+}
+
+/**
+ * The AI review label is a request: only people who can triage may apply it. Centinela reviews,
+ * then removes the label so applying it again after a new commit asks once more.
+ */
+export async function runLabeledAiReview(options) {
+  const { client, config, number, dryRun, log } = options;
+  try {
+    return await runAiReview({ options, again: true });
+  } catch (error) {
+    log(`AI review failed: ${error.message}`);
+    return false;
+  } finally {
+    if (!dryRun) await client.removeLabel(number, config.labels.aiReview.name);
+  }
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env, log = console.log) {
@@ -666,6 +685,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, log 
     log,
   };
   if (target.command) return runCommand({ command: target.command, options, kind: target.kind });
+  if (
+    target.kind === 'pr' &&
+    target.action === 'labeled' &&
+    target.eventLabel === config.labels.aiReview.name
+  )
+    return runLabeledAiReview(options);
   return target.kind === 'pr' ? triagePullRequest(options) : triageIssue(options);
 }
 
