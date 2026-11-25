@@ -105,6 +105,9 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
         body: { query: mutation, variables: { threadId } },
         allow: [403],
       });
+      if (res.data?.errors?.length) {
+        throw new Error(res.data.errors.map(e => e.message).join('; '));
+      }
       return res.data?.data?.resolveReviewThread?.thread?.isResolved === true;
     },
     async resolveReviewThreadForComment(number, commentId) {

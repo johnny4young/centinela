@@ -552,8 +552,13 @@ export async function triagePullRequest({
       }
       remainingOwn = check.stillOpen;
       if (check.resolved.length && !dryRun) {
+        const shortSha = pr.head.sha.slice(0, 7);
         for (const t of check.resolved) {
-          if (t.rootCommentId && client.replyToReviewComment) {
+          const alreadyReplied = t.replies?.some(
+            r =>
+              r.body?.includes(`\`${shortSha}\``) && /^(Addressed in|Resuelto en) `/i.test(r.body)
+          );
+          if (t.rootCommentId && client.replyToReviewComment && !alreadyReplied) {
             await client
               .replyToReviewComment(
                 number,
@@ -563,7 +568,12 @@ export async function triagePullRequest({
               .catch(() => null);
           }
           if (client.resolveReviewThread) {
-            const ok = await client.resolveReviewThread(t.id).catch(() => false);
+            const ok = await client
+              .resolveReviewThread(t.id)
+              .catch(error => {
+                log(`resolveReviewThread(${t.id}) failed: ${error.message}`);
+                return false;
+              });
             if (ok) resolvedNow.push(t);
             else remainingOwn = [...remainingOwn, t];
           }

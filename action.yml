@@ -97,7 +97,8 @@ runs:
         client-id: ${{ inputs.app-client-id }}
         private-key: ${{ inputs.app-private-key }}
         repositories: ${{ inputs.shared-memory-repo != '' && format('{0},{1}', steps.repo.outputs.name, inputs.shared-memory-repo) || steps.repo.outputs.name }}
-        permission-contents: ${{ inputs.allow-learning-prs == 'true' && 'write' || 'read' }}
+        # GitHub's GraphQL resolveReviewThread requires contents:write alongside pull-requests:write.
+        permission-contents: write
         permission-checks: read
         permission-issues: write
         permission-pull-requests: write
