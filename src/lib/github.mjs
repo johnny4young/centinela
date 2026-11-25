@@ -64,7 +64,7 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
       request('POST', `/{repo}/pulls/${number}/reviews`, { body: review }),
     replyToReviewComment: (number, commentId, body) =>
       request('POST', `/{repo}/pulls/${number}/comments/${commentId}/replies`, { body: { body } }),
-    async resolveReviewThreadForComment(number, commentId) {
+    async reviewThreads(number) {
       const [owner, name] = repo.split('/');
       const query = `query($owner: String!, $name: String!, $number: Int!) {
         repository(owner: $owner, name: $name) {
@@ -73,7 +73,19 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
               nodes {
                 id
                 isResolved
-                comments(first: 10) { nodes { databaseId } }
+                isOutdated
+                path
+                line
+                originalLine
+                comments(first: 10) {
+                  nodes {
+                    databaseId
+                    body
+                    url
+                    createdAt
+                    author { login }
+                  }
+                }
               }
             }
           }
@@ -83,19 +95,25 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
         body: { query, variables: { owner, name, number } },
         allow: [403],
       });
-      const threads = data?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
-      const thread = threads.find(
-        t => !t.isResolved && t.comments?.nodes?.some(c => c.databaseId === commentId)
-      );
-      if (!thread) return false;
+      return data?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+    },
+    async resolveReviewThread(threadId) {
       const mutation = `mutation($threadId: ID!) {
         resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } }
       }`;
       const res = await request('POST', `${API}/graphql`, {
-        body: { query: mutation, variables: { threadId: thread.id } },
+        body: { query: mutation, variables: { threadId } },
         allow: [403],
       });
       return res.data?.data?.resolveReviewThread?.thread?.isResolved === true;
+    },
+    async resolveReviewThreadForComment(number, commentId) {
+      const threads = await this.reviewThreads(number);
+      const thread = threads.find(
+        t => !t.isResolved && t.comments?.nodes?.some(c => c.databaseId === commentId)
+      );
+      if (!thread) return false;
+      return this.resolveReviewThread(thread.id);
     },
     reactions: (commentId, reviewComment = false) =>
       paginate(

@@ -51,6 +51,11 @@ export function resolveConfig(project = {}) {
   const sections = config.pullRequest.sections;
   if (sections !== 'template' && !Array.isArray(sections))
     throw new Error('centinela: pullRequest.sections must be "template" or a list of sections');
+  for (const key of ['singleLineTitle', 'requireScreenshots']) {
+    if (!['blocking', 'suggestion', 'off'].includes(config.pullRequest[key])) {
+      throw new Error(`centinela: pullRequest.${key} must be blocking, suggestion or off`);
+    }
+  }
   config.rules.custom = (config.rules.custom ?? []).map(validateRule);
   for (const key of ['effort', 'fastEffort']) {
     if (config.ai[key] && !['low', 'medium', 'high', 'xhigh', 'max'].includes(config.ai[key]))

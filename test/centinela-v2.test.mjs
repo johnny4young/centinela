@@ -9,7 +9,13 @@ import {
   checkMigrationCollisions,
   checkPrOverlap,
 } from '../src/lib/hygiene.mjs';
-import { checkIssue, checkSensitive, isCodeBugReport } from '../src/lib/checks.mjs';
+import {
+  checkDescription,
+  checkEvidence,
+  checkIssue,
+  checkSensitive,
+  isCodeBugReport,
+} from '../src/lib/checks.mjs';
 import { parseRemoteRef, resolveConfig } from '../src/lib/config.mjs';
 import {
   buildPrompt,
@@ -36,7 +42,14 @@ import {
   renderIssueAiComment,
   triageIssueWithAi,
 } from '../src/lib/issues.mjs';
-import { answerThread, isCentinelaMention, renderThreadReply } from '../src/lib/conversation.mjs';
+import {
+  answerThread,
+  isCentinelaMention,
+  partitionOpenThreads,
+  renderThreadReply,
+  verifyOpenThreads,
+} from '../src/lib/conversation.mjs';
+import { renderComment } from '../src/lib/render.mjs';
 import { applyStack, detectPacks } from '../src/lib/packs.mjs';
 import { scaffoldForRepo } from '../src/cli-init.mjs';
 import {
@@ -807,4 +820,171 @@ test('harvestSignals uses repo-wide since watermark without dropping busy-week P
     config: defaults,
   });
   assert.equal(plan.nextLocal.lastHarvestAt, '2026-11-25T00:00:00.000Z');
+});
+
+test('verifyOpenThreads auto-resolves addressed Centinela threads without touching other reviewers', async () => {
+  const threads = [
+    {
+      id: 'T_cent_1',
+      isResolved: false,
+      isOutdated: true,
+      path: 'src/orderPrinter.ts',
+      line: null,
+      originalLine: 42,
+      comments: {
+        nodes: [
+          {
+            databaseId: 1001,
+            url: 'https://github.com/o/r/pull/525#discussion_r1001',
+            author: { login: 'centinela-young' },
+            body: '**Maintainability** · Share the print shell.\n\n<!-- centinela-ai-finding fp=aaa111 -->',
+          },
+        ],
+      },
+    },
+    {
+      id: 'T_cent_2',
+      isResolved: false,
+      isOutdated: false,
+      path: 'src/orderPrinter.ts',
+      line: 88,
+      originalLine: 88,
+      comments: {
+        nodes: [
+          {
+            databaseId: 1002,
+            url: 'https://github.com/o/r/pull/525#discussion_r1002',
+            author: { login: 'centinela-young' },
+            body: '**Bug** · Escape HTML.\n\n<!-- centinela-ai-finding fp=bbb222 -->',
+          },
+        ],
+      },
+    },
+    {
+      id: 'T_copilot',
+      isResolved: false,
+      isOutdated: true,
+      path: 'src/orderPrinter.ts',
+      line: null,
+      originalLine: 10,
+      comments: {
+        nodes: [
+          {
+            databaseId: 2001,
+            url: 'https://github.com/o/r/pull/525#discussion_r2001',
+            author: { login: 'copilot-pull-request-reviewer' },
+            body: 'Check PRINT_CANCELLED handling.',
+          },
+        ],
+      },
+    },
+  ];
+
+  const { ownOpen, otherOpen } = partitionOpenThreads(threads, 'centinela-young[bot]');
+  assert.equal(ownOpen.length, 2);
+  assert.equal(otherOpen.length, 1);
+  assert.equal(otherOpen[0].id, 'T_copilot');
+
+  const model = {
+    messages: {
+      create: async () => ({
+        usage: { input_tokens: 400, output_tokens: 80 },
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              decisions: [
+                {
+                  threadId: 'T_cent_1',
+                  status: 'addressed',
+                  reason: 'Extracted shared buildPrintShell helper used by both documents.',
+                },
+                {
+                  threadId: 'T_cent_2',
+                  status: 'still_open',
+                  reason: 'Supplier notes are still interpolated unescaped.',
+                },
+              ],
+            }),
+          },
+        ],
+      }),
+    },
+  };
+
+  const verified = await verifyOpenThreads({
+    model,
+    pr: { number: 525, title: 'feat(orders): print PO', head: { sha: '8910e39abcdef' } },
+    threads: ownOpen,
+    files: [{ filename: 'src/orderPrinter.ts', status: 'modified', patch: '@@ -1,2 +1,2 @@\n+buildPrintShell()' }],
+    fileAt: async () => 'export function printPo() { return buildPrintShell(); }',
+    language: 'en',
+    config: defaults,
+  });
+  assert.equal(verified.resolved.length, 1);
+  assert.equal(verified.resolved[0].id, 'T_cent_1');
+  assert.equal(verified.stillOpen.length, 1);
+  assert.equal(verified.stillOpen[0].id, 'T_cent_2');
+
+  const comment = renderComment({
+    kind: 'pr',
+    repo: 'johnny4young/puntovivo',
+    config: defaults,
+    author: 'dev',
+    findings: [],
+    language: 'en',
+    key: 'k1',
+    rulesVersion: '12345678',
+    approved: false,
+    approvedSha: null,
+    threadProgress: {
+      sha: '8910e39',
+      resolvedNow: verified.resolved,
+      ownOpen: verified.stillOpen,
+      otherOpen,
+    },
+  });
+  assert.match(comment, /\*\*Review threads\*\*/);
+  assert.match(comment, /1 Centinela thread verified as addressed and resolved in `8910e39`/);
+  assert.match(comment, /1 Centinela thread still open.*src\/orderPrinter\.ts:88/);
+  assert.match(comment, /1 open thread from other reviewers \(1 outdated\)/);
+});
+
+test('pullRequest.requireScreenshots and singleLineTitle support blocking, suggestion and off', () => {
+  const suggestionCfg = resolveConfig({
+    pullRequest: { requireScreenshots: 'suggestion', singleLineTitle: 'suggestion' },
+  });
+  const offCfg = resolveConfig({
+    pullRequest: { requireScreenshots: 'off', singleLineTitle: 'off' },
+  });
+
+  const descSug = checkDescription({
+    title: 'feat(orders): print a\n purchase order',
+    body: '',
+    config: { ...suggestionCfg, pullRequest: { ...suggestionCfg.pullRequest, sections: [] } },
+  });
+  assert.equal(descSug.find(f => f.id === 'title-lines')?.severity, 'suggestion');
+
+  const descOff = checkDescription({
+    title: 'feat(orders): print a\n purchase order',
+    body: '',
+    config: { ...offCfg, pullRequest: { ...offCfg.pullRequest, sections: [] } },
+  });
+  assert.equal(descOff.find(f => f.id === 'title-lines'), undefined);
+
+  const evSug = checkEvidence({
+    title: 'feat(ui): button',
+    body: 'no media here',
+    files: [{ filename: 'apps/web/src/Button.tsx', status: 'modified', additions: 5, deletions: 0 }],
+    config: suggestionCfg,
+  });
+  assert.equal(evSug.find(f => f.id === 'screenshots')?.severity, 'suggestion');
+
+  const evOff = checkEvidence({
+    title: 'feat(ui): button',
+    body: 'no media here',
+    files: [{ filename: 'apps/web/src/Button.tsx', status: 'modified', additions: 5, deletions: 0 }],
+    config: offCfg,
+  });
+  assert.equal(evOff.find(f => f.id === 'screenshots'), undefined);
 });

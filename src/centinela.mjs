@@ -59,7 +59,10 @@ import {
 import {
   answerThread,
   isCentinelaMention,
+  partitionOpenThreads,
   renderThreadReply,
+  renderThreadResolvedReply,
+  verifyOpenThreads,
 } from './lib/conversation.mjs';
 import {
   applySuppressions,
@@ -368,6 +371,7 @@ export async function triagePullRequest({
   version,
   botLogin = null,
   env = process.env,
+  model = null,
   log,
 }) {
   const pr = await client.pull(number);
@@ -518,6 +522,66 @@ export async function triagePullRequest({
   });
   const approved = approvedSha !== null;
   const result = outcome(findings, approved);
+  const language = detectLanguage(pr.title, pr.body ?? '');
+
+  // Verify Centinela's own open review threads against the new head and auto-resolve fixed ones.
+  let threadProgress = null;
+  if (client.reviewThreads) {
+    const threads = await client.reviewThreads(number).catch(() => []);
+    const { ownOpen, otherOpen } = partitionOpenThreads(threads, botLogin);
+    let resolvedNow = [];
+    let remainingOwn = ownOpen;
+    if (ownOpen.length && (model || aiConfigured(env))) {
+      const activeModel = model ?? (await createModel(env));
+      const check = await verifyOpenThreads({
+        model: activeModel,
+        pr,
+        threads: ownOpen,
+        files,
+        fileAt,
+        language,
+        config: effective,
+      }).catch(error => {
+        log(`thread verification failed: ${error.message}`);
+        return { resolved: [], stillOpen: ownOpen, usage: null };
+      });
+      if (check.usage?.input) {
+        log(
+          `#${number} thread verification usage: ${check.usage.input} input, ${check.usage.output} output tokens`
+        );
+      }
+      remainingOwn = check.stillOpen;
+      if (check.resolved.length && !dryRun) {
+        for (const t of check.resolved) {
+          if (t.rootCommentId && client.replyToReviewComment) {
+            await client
+              .replyToReviewComment(
+                number,
+                t.rootCommentId,
+                renderThreadResolvedReply({ sha: pr.head.sha, reason: t.reason, language })
+              )
+              .catch(() => null);
+          }
+          if (client.resolveReviewThread) {
+            const ok = await client.resolveReviewThread(t.id).catch(() => false);
+            if (ok) resolvedNow.push(t);
+            else remainingOwn = [...remainingOwn, t];
+          }
+        }
+      } else {
+        resolvedNow = check.resolved;
+      }
+    }
+    if (resolvedNow.length || remainingOwn.length || otherOpen.length) {
+      threadProgress = {
+        sha: pr.head.sha.slice(0, 7),
+        resolvedNow,
+        ownOpen: remainingOwn,
+        otherOpen,
+      };
+    }
+  }
+
   const body = renderComment({
     kind: 'pr',
     repo,
@@ -525,7 +589,7 @@ export async function triagePullRequest({
     stack: stack.packs,
     author: pr.user.login,
     findings,
-    language: detectLanguage(pr.title, pr.body ?? ''),
+    language,
     key,
     rulesVersion: version,
     approved,
@@ -533,6 +597,7 @@ export async function triagePullRequest({
     tree: approved ? tree : null,
     seen: compared.seen,
     resolved: compared.resolved,
+    threadProgress,
     welcome,
   });
   const size = sizeOf(files, config);

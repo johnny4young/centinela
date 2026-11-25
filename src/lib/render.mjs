@@ -292,6 +292,12 @@ const TEXT = {
       `Welcome, and thanks for your first contribution here!${link ? ` The [contributing guide](${link}) explains how we work.` : ''}`,
     resolved: count =>
       `${count === 1 ? 'One item' : `${count} items`} from the last review ${count === 1 ? 'is' : 'are'} resolved.`,
+    threadsHeading: 'Review threads',
+    threadsResolvedNow: (count, sha) =>
+      `${count} Centinela ${count === 1 ? 'thread' : 'threads'} verified as addressed and resolved in \`${sha}\`.`,
+    threadsOwnOpen: count => `${count} Centinela ${count === 1 ? 'thread' : 'threads'} still open`,
+    threadsOtherOpen: (count, outdated) =>
+      `${count} open ${count === 1 ? 'thread' : 'threads'} from other reviewers${outdated ? ` (${outdated} outdated)` : ''}.`,
     isNew: 'new',
     rules: 'rules',
     footer: pr =>
@@ -311,6 +317,13 @@ const TEXT = {
       `¡Le damos la bienvenida y gracias por su primera contribución aquí!${link ? ` La [guía de contribución](${link}) explica cómo trabajamos.` : ''}`,
     resolved: count =>
       `${count === 1 ? 'Un punto' : `${count} puntos`} de la revisión anterior ${count === 1 ? 'quedó resuelto' : 'quedaron resueltos'}.`,
+    threadsHeading: 'Hilos de revisión',
+    threadsResolvedNow: (count, sha) =>
+      `${count} ${count === 1 ? 'hilo de Centinela verificado y resuelto' : 'hilos de Centinela verificados y resueltos'} en \`${sha}\`.`,
+    threadsOwnOpen: count =>
+      `${count} ${count === 1 ? 'hilo de Centinela sigue abierto' : 'hilos de Centinela siguen abiertos'}`,
+    threadsOtherOpen: (count, outdated) =>
+      `${count} ${count === 1 ? 'hilo abierto' : 'hilos abiertos'} de otros revisores${outdated ? ` (${outdated} desactualizados)` : ''}.`,
     isNew: 'nuevo',
     rules: 'reglas',
     footer: pr =>
@@ -359,6 +372,7 @@ export function renderComment({
   tree = null,
   seen = [],
   resolved = 0,
+  threadProgress = null,
   welcome = null,
   stack = [],
 }) {
@@ -390,6 +404,35 @@ export function renderComment({
     const items = findings.filter(f => f.severity === severity);
     if (!items.length) continue;
     out.push(`**${text[severity]}**`, '', ...lines(items, language, ctx), '');
+  }
+  if (
+    pr &&
+    threadProgress &&
+    (threadProgress.resolvedNow?.length ||
+      threadProgress.ownOpen?.length ||
+      threadProgress.otherOpen?.length)
+  ) {
+    const tLines = [];
+    if (threadProgress.resolvedNow?.length) {
+      tLines.push(`- ${text.threadsResolvedNow(threadProgress.resolvedNow.length, threadProgress.sha)}`);
+    }
+    if (threadProgress.ownOpen?.length) {
+      const refs = threadProgress.ownOpen
+        .slice(0, 5)
+        .map(t => {
+          const label = t.line ? `${t.path}:${t.line}` : t.path;
+          return t.url ? `[\`${label}\`](${t.url})` : `\`${label}\``;
+        })
+        .join(', ');
+      const extra =
+        threadProgress.ownOpen.length > 5 ? ` (+${threadProgress.ownOpen.length - 5})` : '';
+      tLines.push(`- ${text.threadsOwnOpen(threadProgress.ownOpen.length)}: ${refs}${extra}`);
+    }
+    if (threadProgress.otherOpen?.length) {
+      const outdated = threadProgress.otherOpen.filter(t => t.isOutdated).length;
+      tLines.push(`- ${text.threadsOtherOpen(threadProgress.otherOpen.length, outdated)}`);
+    }
+    out.push(`**${text.threadsHeading}**`, '', ...tLines, '');
   }
   const rulesFile = linkFor(config.links.rules, language);
   const rules = rulesFile

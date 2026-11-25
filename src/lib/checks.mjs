@@ -85,7 +85,10 @@ export function checkDescription(ctx) {
   // A pasted title can carry a line break; GitHub shows it but commit subjects break on it.
   const multiline = /[\r\n]/.test(ctx.title.trim());
   const title = ctx.title.replace(/\s+/g, ' ').trim();
-  if (multiline) results.push(finding('title-lines', 'blocking', { title }));
+  const titleLinesMode = rules.singleLineTitle ?? 'blocking';
+  if (multiline && titleLinesMode !== 'off') {
+    results.push(finding('title-lines', titleLinesMode, { title }));
+  }
   if (rules.conventionalTitle && !CONVENTIONAL_TITLE.test(title))
     results.push(finding('title', 'blocking', { title }));
   const parsed = sections(ctx.body ?? '');
@@ -113,8 +116,9 @@ export function checkEvidence(ctx) {
   const uiFiles = ctx.files.filter(
     file => isUi(file.filename) && !isTest(file.filename) && file.status !== 'removed'
   );
-  if (uiFiles.length && !MEDIA.test(body)) {
-    results.push(finding('screenshots', 'blocking', { files: uiFiles.map(f => f.filename) }));
+  const screenshotsMode = ctx.config.pullRequest?.requireScreenshots ?? 'blocking';
+  if (screenshotsMode !== 'off' && uiFiles.length && !MEDIA.test(body)) {
+    results.push(finding('screenshots', screenshotsMode, { files: uiFiles.map(f => f.filename) }));
   }
   if (type === 'fix' && !ISSUE_LINK.test(body)) {
     const sectionsList = Array.isArray(ctx.config.pullRequest.sections)

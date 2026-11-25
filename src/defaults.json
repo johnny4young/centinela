@@ -41,6 +41,8 @@
   },
   "pullRequest": {
     "conventionalTitle": true,
+    "singleLineTitle": "blocking",
+    "requireScreenshots": "blocking",
     "sections": "template"
   },
   "paths": {
