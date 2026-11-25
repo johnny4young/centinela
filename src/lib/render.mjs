@@ -53,6 +53,8 @@ const MESSAGES = {
       `Spanish copy must use neutral Latin American Spanish in the ${p.register === 'tu' ? 'tú' : 'usted'} register; found ${list(p.words)}.`,
     'locale-parity': p =>
       `The key ${code(p.key)} exists in ${code(p.file)} but not in ${code(p.missingIn)}. Every key needs to exist in each language.`,
+    glossary: p =>
+      `Project glossary prefers ${code(p.prefer)} instead of ${code(p.avoid)} in this module.`,
     typo: p =>
       `Possible typo ${code(p.typo)}${p.corrections?.length ? `; did you mean ${list(p.corrections)}?` : '.'}`,
     'sensitive-paths': p =>
@@ -96,6 +98,10 @@ const MESSAGES = {
       'It calls `DispatchQueue.main.sync`, which deadlocks when it runs on the main thread and blocks the caller otherwise. Please use `await MainActor.run` or an async hop.',
     'swift-force-try': () =>
       'It uses `try!` in production code, which crashes the app on error. Please handle or propagate the error.',
+    'swift-untracked-task': () =>
+      'It launches a fire-and-forget `Task { ... }` without storing or cancelling the handle, which can race or outlive its owner.',
+    'swift-silent-try-optional': () =>
+      'It swallows a persistence/write error with `try?`. Please log or propagate the failure instead of dropping it silently.',
     'swift-sleep': () =>
       'It sleeps the thread. On the main actor this freezes the UI; please use `try await Task.sleep` instead.',
     'swift-xcodeproj-edit': () =>
@@ -104,6 +110,10 @@ const MESSAGES = {
       'It uses `http.DefaultClient` or package-level helpers without a timeout. Please use an `http.Client` with an explicit timeout and request context.',
     'go-sql-concat': () =>
       'It formats SQL with `fmt.Sprintf`, which can allow SQL injection. Please use bound query parameters.',
+    'go-ignored-error': () =>
+      'It discards the error returned by a write/close/commit operation with `_ = ...`. Please check or log it.',
+    'go-goroutine-no-ctx': () =>
+      'It spawns a goroutine without an explicit `context.Context` or cancellation path. Ensure it cannot leak on shutdown.',
     'shell-eval': () =>
       'It uses `eval` in a shell script. Please avoid dynamic evaluation or confirm the input is strictly controlled.',
     'ui-left-accent-bar': () =>
@@ -152,8 +162,10 @@ const MESSAGES = {
       `Migration ${code(p.prefix)} collides with or predates ${code(p.latest)} already on the base branch. Please rebase on main and regenerate it as ${code(p.next)}.`,
     'pr-overlap': p =>
       `This branch carries a commit (${code(p.subject)}) that already appears in open pull request #${p.number}. Please rebase so each pull request stays independent.`,
-    'ci-failure': p =>
-      `CI checks are failing (${list(p.checks)}${p.total > p.checks.length ? ` and ${p.total - p.checks.length} more` : ''}). Please inspect the logs and push a fix.`,
+    'ci-failure': p => {
+      const digest = p.highlights?.length ? ` — ${p.highlights.map(code).join('; ')}` : '';
+      return `CI checks are failing (${list(p.checks)}${p.total > p.checks.length ? ` and ${p.total - p.checks.length} more` : ''})${digest}. Please inspect the logs and push a fix.`;
+    },
   },
   es: {
     title: p =>
@@ -173,6 +185,8 @@ const MESSAGES = {
       `Los textos en español deben usar español latinoamericano neutro con registro ${p.register === 'tu' ? 'tú' : 'usted'}; se encontró ${list(p.words)}.`,
     'locale-parity': p =>
       `La clave ${code(p.key)} existe en ${code(p.file)} pero no en ${code(p.missingIn)}. Cada clave debe existir en todos los idiomas.`,
+    glossary: p =>
+      `El glosario del proyecto prefiere ${code(p.prefer)} en lugar de ${code(p.avoid)} en este módulo.`,
     typo: p =>
       `Posible error de escritura ${code(p.typo)}${p.corrections?.length ? `; ¿quiso decir ${list(p.corrections)}?` : '.'}`,
     'sensitive-paths': p =>
@@ -216,6 +230,10 @@ const MESSAGES = {
       'Llama `DispatchQueue.main.sync`, que bloquea la app si corre en el hilo principal y detiene a quien lo llama en los demás casos. Por favor use `await MainActor.run`.',
     'swift-force-try': () =>
       'Usa `try!` en código de producción, lo que cierra la app si ocurre un error. Por favor maneje o propague el error.',
+    'swift-untracked-task': () =>
+      'Lanza un `Task { ... }` sin guardar ni cancelar su handle, lo que puede provocar carreras o trabajo huérfano.',
+    'swift-silent-try-optional': () =>
+      'Descarta en silencio un error de persistencia/escritura con `try?`. Por favor registre o propague el fallo.',
     'swift-sleep': () =>
       'Duerme el hilo. En el main actor esto congela la interfaz; por favor use `try await Task.sleep`.',
     'swift-xcodeproj-edit': () =>
@@ -224,6 +242,10 @@ const MESSAGES = {
       'Usa `http.DefaultClient` o helpers del paquete sin timeout. Por favor use un `http.Client` con timeout explícito y contexto.',
     'go-sql-concat': () =>
       'Construye SQL con `fmt.Sprintf`, lo que puede permitir inyección SQL. Por favor use parámetros enlazados.',
+    'go-ignored-error': () =>
+      'Descarta con `_ = ...` el error de una operación de escritura/cierre/commit. Por favor verifique o registre el error.',
+    'go-goroutine-no-ctx': () =>
+      'Lanza una goroutine sin `context.Context` ni cancelación explícita. Confirme que no pueda fugarse al cerrar.',
     'shell-eval': () =>
       'Usa `eval` en un script de shell. Por favor evite la evaluación dinámica o confirme que la entrada está controlada.',
     'ui-left-accent-bar': () =>
@@ -272,8 +294,10 @@ const MESSAGES = {
       `La migración ${code(p.prefix)} choca con o precede a ${code(p.latest)} en la rama base. Por favor haga rebase sobre main y regenérela como ${code(p.next)}.`,
     'pr-overlap': p =>
       `Esta rama trae un commit (${code(p.subject)}) que ya está en la pull request abierta #${p.number}. Por favor haga rebase para mantener cada pull request independiente.`,
-    'ci-failure': p =>
-      `Hay chequeos de CI fallando (${list(p.checks)}${p.total > p.checks.length ? ` y ${p.total - p.checks.length} más` : ''}). Por favor revise los logs y suba la corrección.`,
+    'ci-failure': p => {
+      const digest = p.highlights?.length ? ` — ${p.highlights.map(code).join('; ')}` : '';
+      return `Hay chequeos de CI fallando (${list(p.checks)}${p.total > p.checks.length ? ` y ${p.total - p.checks.length} más` : ''})${digest}. Por favor revise los logs y suba la corrección.`;
+    },
   },
 };
 

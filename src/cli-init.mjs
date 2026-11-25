@@ -21,6 +21,48 @@ function walkShallow(root, maxDepth = 3, prefix = '') {
   return out;
 }
 
+const MARKDOWN_RULE_DETECTORS = [
+  {
+    match: /\.default\(\s*null\s*\)/i,
+    rule: {
+      id: 'drizzle-null-default',
+      severity: 'blocking',
+      paths: ['**/db/**'],
+      pattern: '\\.default\\(null\\)',
+      message: 'Avoid `.default(null)` on JSON text columns; omit the default.',
+    },
+  },
+  {
+    match: /\btenantId\b/i,
+    rule: {
+      id: 'tenant-scope',
+      severity: 'suggestion',
+      paths: ['**/routers/**', '**/application/**'],
+      message: 'Confirm every query scopes by `tenantId`.',
+    },
+  },
+  {
+    match: /\b(console\.log|no console\.log)\b/i,
+    rule: {
+      id: 'no-console-log',
+      severity: 'suggestion',
+      paths: ['src/**', 'apps/*/src/**', 'packages/*/src/**'],
+      pattern: '\\bconsole\\.log\\s*\\(',
+      message: 'Use the structured logger instead of `console.log`.',
+    },
+  },
+];
+
+/** Extracts deterministic `rules.custom` suggestions from AGENTS.md / CLAUDE.md prose. */
+export function suggestCustomRulesFromMarkdown(markdownText = '') {
+  if (!markdownText) return [];
+  const rules = [];
+  for (const detector of MARKDOWN_RULE_DETECTORS) {
+    if (detector.match.test(markdownText)) rules.push(detector.rule);
+  }
+  return rules;
+}
+
 /** Generates a tailored `.github/centinela.json` and minimal reusable workflow stub for a repo. */
 export function scaffoldForRepo({ dir, maintainer = null, shared = null, extendsRef = null }) {
   const paths = walkShallow(dir, 3);
@@ -39,13 +81,27 @@ export function scaffoldForRepo({ dir, maintainer = null, shared = null, extends
   const ruleFiles = ['AGENTS.md', 'CLAUDE.md', '.github/triage/REVIEW.md', 'CONTRIBUTING.md'].filter(
     f => paths.includes(f)
   );
+  const prose = ruleFiles
+    .map(file => {
+      try {
+        return readFileSync(path.join(dir, file), 'utf8');
+      } catch {
+        return '';
+      }
+    })
+    .join('\n');
+  const suggestedCustom = suggestCustomRulesFromMarkdown(prose);
   const security = ['SECURITY.md', 'docs/SECURITY.md'].find(f => paths.includes(f)) ?? null;
 
   const config = {
     ...(extendsRef ? { extends: extendsRef } : {}),
     ...(maintainer ? { maintainers: [maintainer] } : {}),
     stack: 'auto',
-    rules: { ui: true, comments: true },
+    rules: {
+      ui: true,
+      comments: true,
+      ...(suggestedCustom.length ? { custom: suggestedCustom } : {}),
+    },
     ai: {
       autoReview: 'tiered',
       ...(ruleFiles.length ? { rules: ruleFiles } : {}),

@@ -1,0 +1,76 @@
+[
+  {
+    "id": "ai-525-hollow-assertion-and-glossary",
+    "pr": {
+      "number": 525,
+      "title": "feat(orders): print purchase order",
+      "body": "Adds printable supplier purchase order.",
+      "head": { "sha": "abc1234" },
+      "base": { "sha": "def5678", "ref": "main" }
+    },
+    "files": [
+      {
+        "filename": "apps/web/src/features/orders/orderPrinter.test.ts",
+        "status": "added",
+        "additions": 10,
+        "deletions": 0,
+        "patch": "@@ -0,0 +1,6 @@\n+it('prints quantity 7', async () => {\n+  const html = await buildOrderDocumentHtml(order);\n+  expect(html).toContain('7');\n+});\n"
+      }
+    ],
+    "contents": {
+      "apps/web/src/features/orders/orderPrinter.test.ts": "it('prints quantity 7', async () => {\n  const html = await buildOrderDocumentHtml(order);\n  expect(html).toContain('7');\n});\n"
+    },
+    "learnings": [
+      {
+        "id": "hollow-html-assertion",
+        "scope": "global",
+        "rule": "Do not assert numeric quantities via whole-document string matching on HTML that embeds CSS digits; parse the DOM and read the cell."
+      }
+    ],
+    "expect": {
+      "mustMatch": [
+        { "file": "apps/web/src/features/orders/orderPrinter.test.ts", "keywords": ["css", "assert", "html", "cell", "7", "parse"] }
+      ],
+      "mustNotMatch": [
+        { "keywords": ["sql injection", "memory leak"] }
+      ]
+    }
+  },
+  {
+    "id": "ai-526-tenant-scope-and-blob",
+    "pr": {
+      "number": 526,
+      "title": "feat(purchases): store receiving document",
+      "body": "Stores purchase document uploads.",
+      "head": { "sha": "abc9999" },
+      "base": { "sha": "def0000", "ref": "main" }
+    },
+    "files": [
+      {
+        "filename": "packages/server/src/application/purchases/documents.ts",
+        "status": "added",
+        "additions": 8,
+        "deletions": 0,
+        "patch": "@@ -0,0 +1,5 @@\n+export async function getDocument(db, id: string) {\n+  return db.select().from(purchaseDocuments).where(eq(purchaseDocuments.id, id)).get();\n+}\n"
+      }
+    ],
+    "contents": {
+      "packages/server/src/application/purchases/documents.ts": "export async function getDocument(db, id: string) {\n  return db.select().from(purchaseDocuments).where(eq(purchaseDocuments.id, id)).get();\n}\n"
+    },
+    "learnings": [
+      {
+        "id": "tenant-scope-required",
+        "scope": "repo",
+        "rule": "Every database query must filter by ctx.tenantId."
+      }
+    ],
+    "expect": {
+      "mustMatch": [
+        { "file": "packages/server/src/application/purchases/documents.ts", "keywords": ["tenant", "tenantid", "scope"] }
+      ],
+      "mustNotMatch": [
+        { "keywords": ["typo", "formatting"] }
+      ]
+    }
+  }
+]

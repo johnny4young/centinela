@@ -151,6 +151,16 @@ export const AGENTIC_TOOLS = [
       properties: {},
     },
   },
+  {
+    name: 'get_recent_commits',
+    description: 'List recent commit messages touching a file or directory on the base branch to understand recent decisions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Optional file or directory path.' },
+      },
+    },
+  },
 ];
 
 /** Executes one strictly read-only GitHub API tool call for agentic context gathering. */
@@ -212,6 +222,23 @@ export async function executeReadOnlyTool({ name, input = {}, client, pr, tracke
     return others.length
       ? others.map(p => `#${p.number} (${p.user?.login ?? 'unknown'}): ${p.title}`).join('\n')
       : 'No other open pull requests.';
+  }
+  if (name === 'get_recent_commits') {
+    const target = String(input.path ?? '').replace(/^\/+/, '');
+    if (target.includes('..')) return 'Invalid path.';
+    const commits = client.pathCommits
+      ? await client.pathCommits(target, pr.base?.ref ?? pr.base?.sha ?? '', 8).catch(() => [])
+      : [];
+    return commits.length
+      ? commits
+          .map(c => {
+            const sha = String(c.sha ?? '').slice(0, 7);
+            const date = String(c.commit?.author?.date ?? '').slice(0, 10);
+            const subject = String(c.commit?.message ?? '').split('\n')[0];
+            return `${sha} (${date}): ${subject}`;
+          })
+          .join('\n')
+      : 'No recent commits found.';
   }
   return `Unknown tool: ${name}`;
 }

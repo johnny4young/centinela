@@ -137,6 +137,20 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
       request('GET', `/{repo}/commits/${sha}/check-runs?per_page=100`, { allow: [404, 422] }).then(
         r => r.data?.check_runs ?? []
       ),
+    checkRunAnnotations: (checkRunId, limit = 10) =>
+      request(
+        'GET',
+        `/{repo}/check-runs/${checkRunId}/annotations?per_page=${Math.min(limit, 50)}`,
+        { allow: [403, 404, 422] }
+      ).then(r => (Array.isArray(r.data) ? r.data : [])),
+    pathCommits: (filePath = '', ref = '', limit = 8) => {
+      const qs = new URLSearchParams({ per_page: String(Math.min(limit, 30)) });
+      if (filePath) qs.set('path', filePath);
+      if (ref) qs.set('sha', ref);
+      return request('GET', `/{repo}/commits?${qs.toString()}`, { allow: [403, 404, 422] }).then(
+        r => (Array.isArray(r.data) ? r.data : [])
+      );
+    },
     openPulls: (limit = 30) =>
       paginate('/{repo}/pulls?state=open&sort=updated&direction=desc', limit),
     closedPulls: (limit = 30) =>

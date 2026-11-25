@@ -8,11 +8,13 @@ import {
   checkCiFailures,
   checkMigrationCollisions,
   checkPrOverlap,
+  collectHygiene,
 } from '../src/lib/hygiene.mjs';
 import {
   checkDescription,
   checkEvidence,
   checkIssue,
+  checkLanguage,
   checkSensitive,
   isCodeBugReport,
 } from '../src/lib/checks.mjs';
@@ -32,6 +34,7 @@ import {
   learningStacksFor,
   loadMultiProjectLearnings,
   planLearningUpdates,
+  renderLearningPrBody,
   sanitizeSharedCandidate,
   selectLearningsForFiles,
 } from '../src/lib/learnings.mjs';
@@ -51,7 +54,7 @@ import {
 } from '../src/lib/conversation.mjs';
 import { renderComment } from '../src/lib/render.mjs';
 import { applyStack, detectPacks } from '../src/lib/packs.mjs';
-import { scaffoldForRepo } from '../src/cli-init.mjs';
+import { scaffoldForRepo, suggestCustomRulesFromMarkdown } from '../src/cli-init.mjs';
 import {
   loadConfig,
   parseTarget,
@@ -60,7 +63,7 @@ import {
   runLearn,
   triageIssue,
 } from '../src/centinela.mjs';
-import { runSuite } from '../evals/run-eval.mjs';
+import { evaluateAiCase, runSuite } from '../evals/run-eval.mjs';
 
 const defaults = resolveConfig({});
 
@@ -987,4 +990,192 @@ test('pullRequest.requireScreenshots and singleLineTitle support blocking, sugge
     config: offCfg,
   });
   assert.equal(evOff.find(f => f.id === 'screenshots'), undefined);
+});
+
+test('CI annotations digest, active glossary, extra Swift/Go rules, recent commits tool, implicit TP/FN and AI evals', async () => {
+  // 1. CI failure digest pulls check run annotations
+  const hygiene = await collectHygiene({
+    client: {
+      checkRuns: async () => [
+        { id: 99, name: 'Web App', status: 'completed', conclusion: 'failure', output: {} },
+      ],
+      checkRunAnnotations: async () => [
+        {
+          annotation_level: 'failure',
+          path: 'apps/web/vite.config.ts',
+          start_line: 12,
+          message: 'Bundle-size regression past 5% threshold: app-shell 48.40 kB > 46 kB',
+        },
+      ],
+    },
+    pr: { number: 525, base: { ref: 'main' }, head: { sha: '8910e39' } },
+    files: [],
+    commits: [],
+    basePaths: [],
+    config: defaults,
+  });
+  const ciFinding = hygiene.findings.find(f => f.id === 'ci-failure');
+  assert.ok(ciFinding);
+  assert.match(ciFinding.params.highlights[0], /Web App:.*Bundle-size regression/);
+  const renderedCi = renderComment({
+    kind: 'pr',
+    repo: 'johnny4young/puntovivo',
+    config: defaults,
+    author: 'dev',
+    findings: [ciFinding],
+    language: 'en',
+    key: 'k-ci',
+    rulesVersion: '12345678',
+    approved: false,
+    approvedSha: null,
+  });
+  assert.match(renderedCi, /Bundle-size regression/);
+
+  // 2. Active glossary enforcement in checkLanguage
+  const glossaryFindings = checkLanguage({
+    files: [
+      {
+        filename: 'apps/web/src/i18n/locales/es/orders.json',
+        patch: '@@ -1,1 +1,1 @@\n+  "print": "Imprimir pedido"\n',
+      },
+    ],
+    glossary: {
+      es: [{ avoid: 'pedido', prefer: 'orden', paths: ['**/orders*'] }],
+    },
+    config: defaults,
+  });
+  assert.equal(glossaryFindings.find(f => f.id === 'glossary')?.params.prefer, 'orden');
+
+  // 3. Extra Swift & Go stack rules
+  const swiftApplied = applyStack(defaults, { packs: ['swift'], paths: ['Package.swift'] });
+  const swiftRuleIds = new Set(swiftApplied.rules.map(r => r.id));
+  assert.ok(swiftRuleIds.has('swift-untracked-task'));
+  assert.ok(swiftRuleIds.has('swift-silent-try-optional'));
+
+  const goApplied = applyStack(defaults, { packs: ['go'], paths: ['go.mod'] });
+  const goRuleIds = new Set(goApplied.rules.map(r => r.id));
+  assert.ok(goRuleIds.has('go-ignored-error'));
+  assert.ok(goRuleIds.has('go-goroutine-no-ctx'));
+
+  // 4. get_recent_commits read-only AI tool
+  const commitToolOut = await executeReadOnlyTool({
+    name: 'get_recent_commits',
+    input: { path: 'src/orderPrinter.ts' },
+    client: {
+      pathCommits: async () => [
+        {
+          sha: '8910e39abcdef',
+          commit: { author: { date: '2026-11-25T14:05:01Z' }, message: 'fix(orders): share print bridge\n\nbody' },
+        },
+      ],
+    },
+    pr: { number: 525, base: { ref: 'main', sha: 'base' }, head: { sha: 'head' } },
+  });
+  assert.match(commitToolOut, /8910e39 \(2026-11-25\): fix\(orders\): share print bridge/);
+
+  // 5. Implicit TP (auto-resolved thread) + post-merge FN + copy-paste rules.custom promotion
+  const signals = await harvestSignals({
+    client: {
+      repoReviewComments: async () => [
+        {
+          id: 500,
+          pull_request_url: 'https://api.github.com/repos/o/r/pulls/525',
+          path: 'src/a.ts',
+          user: { type: 'Bot', login: 'centinela-young[bot]' },
+          body: '**Bug** · Fix\n\n<!-- centinela-ai-finding fp=abc123 -->',
+          position: null,
+          original_position: 12,
+        },
+        {
+          id: 501,
+          in_reply_to_id: 500,
+          pull_request_url: 'https://api.github.com/repos/o/r/pulls/525',
+          path: 'src/a.ts',
+          user: { type: 'Bot', login: 'centinela-young[bot]' },
+          body: 'Addressed in `8910e39` — fixed. Resolving this thread.',
+        },
+      ],
+      reactions: async () => [],
+      pathCommits: async () => [
+        {
+          sha: 'deadbeef1234',
+          commit: {
+            author: { date: '2026-11-24T10:00:00Z' },
+            message: 'fix(orders): handle empty items (#520)',
+          },
+        },
+      ],
+    },
+    config: defaults,
+    repo: 'o/r',
+    botLogin: 'centinela-young[bot]',
+    now: Date.parse('2026-11-25T12:00:00Z'),
+  });
+  assert.equal(signals.feedback[0].accepted, true, 'auto-resolved finding counts as implicit TP');
+  assert.equal(signals.feedback[0].implicit, true);
+  assert.equal(signals.postMergeFixes.length, 1);
+  const prBody = renderLearningPrBody(
+    {
+      addedLocal: [],
+      addedShared: [],
+      retirements: [],
+      promotions: [{ id: 'no-foo', severity: 'suggestion', paths: ['src/**'], pattern: 'foo', message: 'No foo' }],
+      postMergeFixes: signals.postMergeFixes,
+    },
+    { repo: 'o/r' }
+  );
+  assert.match(prBody, /```json/);
+  assert.match(prBody, /Recent post-merge fixes/);
+
+  // 6. AGENTS.md -> rules.custom suggestion in cli-init
+  const suggested = suggestCustomRulesFromMarkdown('Never use `.default(null)` in Drizzle or `console.log`.');
+  assert.ok(suggested.some(r => r.id === 'drizzle-null-default'));
+  assert.ok(suggested.some(r => r.id === 'no-console-log'));
+
+  // 7. AI-layer eval runner
+  const aiEval = await evaluateAiCase(
+    {
+      id: 'mock-ai-case',
+      pr: { number: 525, title: 'feat: test', body: '', head: { sha: '1' }, base: { sha: '0' } },
+      files: [{ filename: 'a.ts', status: 'added', additions: 2, deletions: 0, patch: '@@ -0,0 +1,2 @@\n+const x = 1;\n' }],
+      contents: { 'a.ts': 'const x = 1;\n' },
+      expect: { mustMatch: [{ file: 'a.ts', keywords: ['tenant'] }], mustNotMatch: [{ keywords: ['sql'] }] },
+    },
+    {
+      model: {
+        beta: {
+          messages: {
+            stream: () => ({
+              finalMessage: async () => ({
+                usage: { input_tokens: 500, output_tokens: 100 },
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({
+                      summary: 'Missing tenant filter.',
+                      findings: [
+                        {
+                          file: 'a.ts',
+                          startLine: 0,
+                          line: 1,
+                          category: 'security',
+                          severity: 'maintainer',
+                          title: 'Missing tenantId scope',
+                          detail: 'Filter by tenantId.',
+                          suggestion: '',
+                        },
+                      ],
+                    }),
+                  },
+                ],
+              }),
+            }),
+          },
+        },
+      },
+    }
+  );
+  assert.equal(aiEval.passed, true);
+  assert.equal(aiEval.tp, 1);
+  assert.equal(aiEval.usage.input, 500);
 });

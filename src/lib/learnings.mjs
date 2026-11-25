@@ -313,6 +313,7 @@ export async function harvestSignals({
   config,
   repo,
   botLogin,
+  baseBranch = 'main',
   since = null,
   now = Date.now(),
   limit = 15,
@@ -322,6 +323,19 @@ export async function harvestSignals({
   const maintainerComments = [];
   const feedback = [];
   const seenPrNumbers = new Set();
+  const dismissedFps = new Set();
+  const addressedRootIds = new Set();
+
+  const collectComments = comments => {
+    for (const c of comments) {
+      const body = c.body ?? '';
+      const dismissedFp = body.match(/<!-- centinela-feedback outcome=dismissed fp=([a-f0-9]+) -->/)?.[1];
+      if (dismissedFp) dismissedFps.add(dismissedFp);
+      if (c.in_reply_to_id && /^(Addressed in|Resuelto en) `[a-f0-9]+`/i.test(body)) {
+        addressedRootIds.add(c.in_reply_to_id);
+      }
+    }
+  };
 
   const inspectComment = async (c, prNumber) => {
     const login = c.user?.login?.toLowerCase();
@@ -334,7 +348,19 @@ export async function harvestSignals({
         : [];
       const plus = reactions.filter(r => r.content === '+1').length;
       const minus = reactions.filter(r => r.content === '-1').length;
-      feedback.push({ pr: prNumber, fp, path: c.path, accepted: plus > 0, dismissed: minus > 0 });
+      const dismissed = minus > 0 || dismissedFps.has(fp);
+      // Implicit true positive when Centinela verified the fix or the diff hunk became outdated without dismissal.
+      const implicitAccepted =
+        !dismissed &&
+        (addressedRootIds.has(c.id) || (c.position === null && c.original_position != null));
+      feedback.push({
+        pr: prNumber,
+        fp,
+        path: c.path,
+        accepted: plus > 0 || implicitAccepted,
+        dismissed,
+        implicit: plus === 0 && implicitAccepted,
+      });
     } else if (
       (maintainers.has(login) || ['OWNER', 'MEMBER'].includes(c.author_association)) &&
       body.length >= 35 &&
@@ -349,8 +375,27 @@ export async function harvestSignals({
     }
   };
 
+  // Detect post-merge false negatives: reverts or fix commits referencing a recent PR in the last 30 days.
+  const postMergeFixes = [];
+  if (client.pathCommits) {
+    const cutoff = now - 30 * 86_400_000;
+    const recent = await client.pathCommits('', baseBranch, 30).catch(() => []);
+    for (const c of recent) {
+      const ts = Date.parse(c.commit?.author?.date ?? '');
+      if (!Number.isNaN(ts) && ts < cutoff) continue;
+      const subject = String(c.commit?.message ?? '').split('\n')[0].trim();
+      if (/^revert\b/i.test(subject) || (/^fix(\([^)]+\))?:/i.test(subject) && /#\d+/.test(subject))) {
+        postMergeFixes.push({
+          sha: String(c.sha ?? '').slice(0, 7),
+          subject: subject.slice(0, 140),
+        });
+      }
+    }
+  }
+
   if (client.repoReviewComments) {
     const all = await client.repoReviewComments(sinceIso, 500).catch(() => []);
+    collectComments(all);
     for (const c of all) {
       const prNumber = prNumberFromUrl(c.pull_request_url);
       if (prNumber) seenPrNumbers.add(prNumber);
@@ -359,6 +404,7 @@ export async function harvestSignals({
     return {
       maintainerComments,
       feedback,
+      postMergeFixes: postMergeFixes.slice(0, 10),
       scannedPrs: seenPrNumbers.size,
       scannedComments: all.length,
       since: sinceIso,
@@ -375,11 +421,13 @@ export async function harvestSignals({
     const comments = client.reviewComments
       ? await client.reviewComments(pr.number).catch(() => [])
       : [];
+    collectComments(comments);
     for (const c of comments) await inspectComment(c, pr.number);
   }
   return {
     maintainerComments,
     feedback,
+    postMergeFixes: postMergeFixes.slice(0, 10),
     scannedPrs: Math.min(seenPrs.size, limit),
     since: sinceIso,
     harvestedAt: new Date(now).toISOString(),
@@ -621,6 +669,7 @@ export function planLearningUpdates({
     addedShared,
     retirements,
     promotions,
+    postMergeFixes: signals?.postMergeFixes ?? [],
   };
 }
 
@@ -665,6 +714,34 @@ export function renderLearningPrBody(plan, { repo, language = 'en' } = {}) {
     );
     for (const p of plan.promotions) {
       lines.push(`- \`${p.id}\`: pattern \`${p.pattern}\``);
+    }
+    lines.push(
+      '',
+      '```json',
+      JSON.stringify(
+        plan.promotions.map(p => ({
+          id: p.id,
+          severity: p.severity,
+          ...(p.paths?.length ? { paths: p.paths } : {}),
+          pattern: p.pattern,
+          message: p.message,
+        })),
+        null,
+        2
+      ),
+      '```',
+      ''
+    );
+  }
+  if (plan.postMergeFixes?.length) {
+    lines.push(
+      es
+        ? '### Fixes / reverts post-merge recientes (posibles falsos negativos)'
+        : '### Recent post-merge fixes / reverts (potential false negatives)',
+      ''
+    );
+    for (const f of plan.postMergeFixes.slice(0, 8)) {
+      lines.push(`- \`${f.sha}\`: ${f.subject}`);
     }
     lines.push('');
   }

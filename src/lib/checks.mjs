@@ -167,6 +167,32 @@ export function checkLanguage(ctx) {
   for (const gap of ctx.localeGaps ?? []) {
     results.push(finding('locale-parity', 'blocking', gap, { file: gap.file }));
   }
+  const glossaryEntries = Object.values(ctx.glossary ?? {}).flat().filter(
+    g => g && typeof g.avoid === 'string' && g.avoid.trim() && typeof g.prefer === 'string'
+  );
+  if (glossaryEntries.length) {
+    const isTest = matcher(ctx.config.paths.tests);
+    for (const entry of glossaryEntries) {
+      const matchPath = entry.paths?.length ? matcher(entry.paths) : () => true;
+      const avoidPattern = words([entry.avoid.trim()]);
+      for (const file of ctx.files) {
+        if (isTest(file.filename) || !matchPath(file.filename)) continue;
+        for (const { line, text } of addedLines(file.patch)) {
+          const value = text.match(/:\s*"((?:[^"\\]|\\.)*)"/)?.[1] ?? text;
+          if (avoidPattern.test(value)) {
+            results.push(
+              finding(
+                'glossary',
+                'suggestion',
+                { avoid: entry.avoid.trim(), prefer: entry.prefer.trim() },
+                { file: file.filename, line }
+              )
+            );
+          }
+        }
+      }
+    }
+  }
   for (const typo of (ctx.typos ?? []).slice(0, 15)) {
     results.push(
       finding(

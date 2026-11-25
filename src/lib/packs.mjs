@@ -110,6 +110,17 @@ export const PACKS = {
       { id: 'swift-main-sync', severity: 'maintainer', pattern: /DispatchQueue\.main\.sync\b/ },
       { id: 'swift-force-try', severity: 'maintainer', pattern: /\btry!\s/ },
       {
+        id: 'swift-untracked-task',
+        severity: 'suggestion',
+        pattern: /(?:^|[;{]\s*)Task(?:\.detached)?\s*(?:\([^)]*\))?\s*\{/,
+        unless: /=\s*Task|return\s+Task|\.task\b/,
+      },
+      {
+        id: 'swift-silent-try-optional',
+        severity: 'suggestion',
+        pattern: /\btry\?\s+(?:await\s+)?[^\n]*\b(?:save|write|delete|persist|migrate|commit|execute|encode)\b/i,
+      },
+      {
         id: 'swift-sleep',
         severity: 'suggestion',
         pattern: /\bThread\.sleep\b|\busleep\s*\(|(?<![\w.])sleep\s*\(/,
@@ -144,6 +155,19 @@ export const PACKS = {
         severity: 'maintainer',
         paths: ['**/*.go'],
         pattern: /\.(Query|QueryRow|Exec)(Context)?\s*\([^)]*fmt\.Sprintf\b/,
+      },
+      {
+        id: 'go-ignored-error',
+        severity: 'suggestion',
+        paths: ['**/*.go'],
+        pattern: /\b_\s*=\s*[A-Za-z_][\w.]*\.(?:Close|Write|Flush|Commit|Rollback|Exec|Save|Remove)\s*\(/,
+      },
+      {
+        id: 'go-goroutine-no-ctx',
+        severity: 'suggestion',
+        paths: ['**/*.go'],
+        pattern: /\bgo\s+func\s*\(\s*\)\s*\{/,
+        unless: /\b(?:ctx|context|Done\()/,
       },
     ],
   },

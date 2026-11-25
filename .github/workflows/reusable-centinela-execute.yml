@@ -1,0 +1,116 @@
+name: Centinela Execute Reusable (Opt-in Tier 2)
+
+# Strictly separated from pull_request_target: only runs when a maintainer explicitly applies
+# `centinela: draft-pr`, comments `/centinela draft-pr` on an issue, or comments
+# `/centinela fix-nits` on a pull request. Never merges or approves its own PRs.
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: Runner image (use macos-15 for Swift/Xcode repos that need local tests).
+        required: false
+        type: string
+        default: ubuntu-latest
+
+permissions: {}
+
+jobs:
+  draft-pr:
+    name: Draft PR from issue
+    if: >-
+      (github.event_name == 'issues' &&
+      github.event.label.name == 'centinela: draft-pr' &&
+      github.event.sender.type != 'Bot') ||
+      (github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request == null &&
+      github.event.comment.user.type != 'Bot' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      startsWith(github.event.comment.body, '/centinela draft-pr'))
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Acknowledge and remove trigger label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "issue_comment" ]; then
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes
+          else
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/labels/centinela%3A%20draft-pr" || true
+          fi
+      - name: Run autonomous implementation agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          prompt: |
+            Implement issue #${{ github.event.issue.number }} on a new branch and open a Draft PR referencing it.
+            Follow AGENTS.md / CLAUDE.md strictly, add regression tests, and run the project test suite before opening the Draft PR.
+            Do not add AI co-authorship trailers to commit messages. Never merge or approve your own PR.
+      - name: Report failure on issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "Centinela Tier 2 (\`centinela: draft-pr\`) failed before opening a Draft PR. Inspect the workflow run: ${RUN_URL}"
+
+  fix-nits:
+    name: Fix mechanical PR nits
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.type != 'Bot' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      startsWith(github.event.comment.body, '/centinela fix-nits')
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Acknowledge fix-nits request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" -f content=eyes
+      - name: Run mechanical PR nit fixer
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          prompt: |
+            Inspect pull request #${{ github.event.issue.number }} and its open Centinela findings and inline suggestions.
+            First verify the PR branch is writable (same-repo branch or maintainerCanModify=true); if not, leave a short comment explaining why and stop.
+            Otherwise check out the PR branch, apply only clear mechanical fixes (typos, locale parity, glossary terms, simple Centinela suggestions, formatting/lint), run the relevant tests, commit without AI co-authorship trailers, and push to the PR branch without force-pushing.
+            Never merge or approve the PR. Leave a brief summary comment listing what was fixed.
+      - name: Report failure on pull request
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "Centinela Tier 2 (\`/centinela fix-nits\`) failed. Inspect the workflow run: ${RUN_URL}"

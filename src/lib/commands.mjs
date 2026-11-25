@@ -34,6 +34,8 @@ const HELP = {
     '- `/centinela review` asks Claude for a deep agentic review (maintainers only).',
     '- `/centinela triage` runs AI issue triage for duplicates, already-fixed checks and direction (maintainers only).',
     '- `/centinela learn` harvests recent maintainer reviews and updates learned rules (maintainers only).',
+    '- `/centinela draft-pr` opens a Draft PR from an issue via Tier 2 execution (maintainers only).',
+    '- `/centinela fix-nits` applies mechanical review fixes on a pull request via Tier 2 (maintainers only).',
     '- `/centinela help` shows this list.',
   ],
   es: [
@@ -43,6 +45,8 @@ const HELP = {
     '- `/centinela review` pide a Claude una revisión agéntica profunda (solo mantenedores).',
     '- `/centinela triage` ejecuta triage con IA en el issue: duplicados, ya resuelto en main y guía (solo mantenedores).',
     '- `/centinela learn` cosecha revisiones recientes y propone actualizar los aprendizajes (solo mantenedores).',
+    '- `/centinela draft-pr` abre un Draft PR desde un issue con Tier 2 (solo mantenedores).',
+    '- `/centinela fix-nits` aplica correcciones mecánicas en una pull request con Tier 2 (solo mantenedores).',
     '- `/centinela help` muestra esta lista.',
   ],
 };

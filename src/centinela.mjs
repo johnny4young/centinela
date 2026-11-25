@@ -501,6 +501,7 @@ export async function triagePullRequest({
       workflows,
       repo,
       localeGaps: gaps,
+      glossary: learned.glossary,
       dependencies,
       typos: typos ?? [],
     }),
@@ -628,10 +629,16 @@ export async function triagePullRequest({
   const { labels: names } = config;
   const sizeLabels = Object.keys(names.size).map(label => `size/${label}`);
   const hasCiFailure = findings.some(f => f.id === 'ci-failure');
+  const hasOpenOwnThreads = Boolean(threadProgress?.ownOpen?.length);
   const wanted = new Set([`size/${size.label}`]);
-  if (result.blocking) wanted.add(names.waitingOnAuthor.name);
+  if (result.blocking || hasOpenOwnThreads) wanted.add(names.waitingOnAuthor.name);
   if (result.maintainer) wanted.add(names.needsMaintainer.name);
-  if (result.state === 'success' && !hasCiFailure && names.readyForMaintainer) {
+  if (
+    result.state === 'success' &&
+    !hasCiFailure &&
+    !hasOpenOwnThreads &&
+    names.readyForMaintainer
+  ) {
     wanted.add(names.readyForMaintainer.name);
   }
   for (const label of wanted) {
@@ -1192,6 +1199,7 @@ export async function runLearn({ options, openPr = false, env = process.env, mod
     config,
     repo,
     botLogin,
+    baseBranch,
     since: currentLocal.lastHarvestAt,
   });
 

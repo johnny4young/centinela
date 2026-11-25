@@ -132,7 +132,16 @@ export function checkPrOverlap({ number, commits = [], openPulls = [], config })
 
 const FAILING_CONCLUSIONS = new Set(['failure', 'timed_out', 'action_required']);
 
-/** Summarizes failed CI check runs on the PR head, ignoring Centinela's own checks. */
+function cleanDigestLine(text) {
+  return String(text ?? '')
+    .replace(/\r?\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[`<>]/g, '')
+    .trim()
+    .slice(0, 140);
+}
+
+/** Summarizes failed CI check runs and their concrete error annotations, ignoring Centinela. */
 export function checkCiFailures({ checkRuns = [], config }) {
   if (config.hygiene?.checkCi === false || !checkRuns.length) return [];
   const own = (config.statusContext ?? 'centinela').toLowerCase();
@@ -145,18 +154,35 @@ export function checkCiFailures({ checkRuns = [], config }) {
           .toLowerCase()
           .includes(own)
     )
-    .map(run => ({
-      name: run.name,
-      conclusion: run.conclusion,
-      url: run.html_url ?? null,
-      summary: run.output?.title || run.output?.summary?.slice(0, 180) || null,
-    }));
+    .map(run => {
+      const annotations = (run.annotations ?? [])
+        .filter(a => a?.message && a.annotation_level !== 'notice')
+        .slice(0, 2)
+        .map(a => {
+          const loc = a.path && a.start_line ? `${a.path}:${a.start_line} ` : '';
+          return cleanDigestLine(`${loc}${a.message}`);
+        })
+        .filter(Boolean);
+      const fallback = cleanDigestLine(run.output?.title || run.output?.summary);
+      return {
+        name: run.name,
+        conclusion: run.conclusion,
+        url: run.html_url ?? null,
+        summary: annotations[0] || fallback || null,
+        annotations,
+      };
+    });
   if (!failed.length) return [];
+  const highlights = failed
+    .filter(f => f.summary)
+    .slice(0, 3)
+    .map(f => `${f.name}: ${f.summary}`);
   return [
     finding('ci-failure', 'suggestion', {
       checks: failed.slice(0, 6).map(f => f.name),
       total: failed.length,
       details: failed.slice(0, 6),
+      highlights,
     }),
   ];
 }
@@ -183,6 +209,23 @@ export async function collectHygiene({ client, pr, files, commits, basePaths, co
       ? client.tree(pr.base.ref).catch(() => basePaths)
       : basePaths,
   ]);
+  const own = (config.statusContext ?? 'centinela').toLowerCase();
+  const failedWithIds = (checkRuns ?? []).filter(
+    run =>
+      run.id &&
+      run.status === 'completed' &&
+      FAILING_CONCLUSIONS.has(run.conclusion) &&
+      !String(run.name ?? '')
+        .toLowerCase()
+        .includes(own)
+  );
+  if (client.checkRunAnnotations && failedWithIds.length) {
+    await Promise.all(
+      failedWithIds.slice(0, 3).map(async run => {
+        run.annotations = await client.checkRunAnnotations(run.id, 10).catch(() => []);
+      })
+    );
+  }
   const findings = [
     ...checkBranchState({ pr, behindBy: comparison?.behind_by ?? null, config }),
     ...checkMigrationCollisions({ files, basePaths: tipPaths ?? basePaths, config }),
