@@ -54,6 +54,11 @@ export function createClient({ token, repo, statusContext = 'centinela', fetchIm
     pullCommits: number => paginate(`/{repo}/pulls/${number}/commits`, 250),
     comments: number => paginate(`/{repo}/issues/${number}/comments`),
     reviewComments: number => paginate(`/{repo}/pulls/${number}/comments`),
+    repoReviewComments: (since, limit = 500) =>
+      paginate(
+        `/{repo}/pulls/comments?sort=updated&direction=desc${since ? `&since=${encodeURIComponent(since)}` : ''}`,
+        limit
+      ),
     reviews: number => paginate(`/{repo}/pulls/${number}/reviews`),
     createReview: (number, review) =>
       request('POST', `/{repo}/pulls/${number}/reviews`, { body: review }),

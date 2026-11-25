@@ -1,7 +1,13 @@
 import { matcher, sha256 } from './core.mjs';
 import { parseRemoteRef } from './config.mjs';
 
-export const EMPTY_LEARNINGS = { version: 1, learnings: [], suppressions: [], glossary: {} };
+export const EMPTY_LEARNINGS = {
+  version: 1,
+  lastHarvestAt: null,
+  learnings: [],
+  suppressions: [],
+  glossary: {},
+};
 
 const VALID_SCOPES = new Set(['global', 'stack', 'repo']);
 const VALID_STATUS = new Set(['active', 'candidate', 'retired']);
@@ -31,7 +37,11 @@ export function parseLearningsDoc(text) {
       s => s && typeof s.id === 'string' && (typeof s.ruleId === 'string' || typeof s.learningId === 'string')
     );
     const glossary = raw.glossary && typeof raw.glossary === 'object' ? raw.glossary : {};
-    return { version: raw.version ?? 1, learnings, suppressions, glossary };
+    const lastHarvestAt =
+      typeof raw.lastHarvestAt === 'string' && !Number.isNaN(Date.parse(raw.lastHarvestAt))
+        ? raw.lastHarvestAt
+        : null;
+    return { version: raw.version ?? 1, lastHarvestAt, learnings, suppressions, glossary };
   } catch {
     return structuredClone(EMPTY_LEARNINGS);
   }
@@ -290,48 +300,90 @@ export function sanitizeSharedCandidate(candidate, { isPrivate = false } = {}) {
 
 const RULE_SIGNAL = /\b(please|never|always|must|avoid|prefer|store|scope|drop|use|do not|don't)\b/i;
 
-/** Extracts candidate rules from maintainer review comments and Centinela comment feedback. */
-export async function harvestSignals({ client, config, repo, botLogin, limit = 15 }) {
+const DEFAULT_HARVEST_DAYS = 14;
+const prNumberFromUrl = url => Number(String(url ?? '').match(/\/pulls\/(\d+)/)?.[1]) || 0;
+
+/**
+ * Extracts candidate rules from maintainer review comments and Centinela comment feedback.
+ * Prefers the repo-wide `/pulls/comments?since=` endpoint so busy weeks never drop PRs; falls back
+ * to scanning recent PRs when a mock or restricted client lacks `repoReviewComments`.
+ */
+export async function harvestSignals({
+  client,
+  config,
+  repo,
+  botLogin,
+  since = null,
+  now = Date.now(),
+  limit = 15,
+}) {
   const maintainers = new Set((config.maintainers ?? []).map(m => m.toLowerCase()));
+  const sinceIso = since || new Date(now - DEFAULT_HARVEST_DAYS * 86_400_000).toISOString();
+  const maintainerComments = [];
+  const feedback = [];
+  const seenPrNumbers = new Set();
+
+  const inspectComment = async (c, prNumber) => {
+    const login = c.user?.login?.toLowerCase();
+    const body = c.body ?? '';
+    if (c.user?.type === 'Bot' && (!botLogin || c.user.login === botLogin)) {
+      const fp = body.match(/<!-- centinela-ai-finding fp=([a-f0-9]+) -->/)?.[1];
+      if (!fp) return;
+      const reactions = client.reactions
+        ? await client.reactions(c.id, true).catch(() => [])
+        : [];
+      const plus = reactions.filter(r => r.content === '+1').length;
+      const minus = reactions.filter(r => r.content === '-1').length;
+      feedback.push({ pr: prNumber, fp, path: c.path, accepted: plus > 0, dismissed: minus > 0 });
+    } else if (
+      (maintainers.has(login) || ['OWNER', 'MEMBER'].includes(c.author_association)) &&
+      body.length >= 35 &&
+      RULE_SIGNAL.test(body)
+    ) {
+      maintainerComments.push({
+        pr: prNumber,
+        path: c.path,
+        body: body.trim().slice(0, 600),
+        repo,
+      });
+    }
+  };
+
+  if (client.repoReviewComments) {
+    const all = await client.repoReviewComments(sinceIso, 500).catch(() => []);
+    for (const c of all) {
+      const prNumber = prNumberFromUrl(c.pull_request_url);
+      if (prNumber) seenPrNumbers.add(prNumber);
+      await inspectComment(c, prNumber);
+    }
+    return {
+      maintainerComments,
+      feedback,
+      scannedPrs: seenPrNumbers.size,
+      scannedComments: all.length,
+      since: sinceIso,
+      harvestedAt: new Date(now).toISOString(),
+    };
+  }
+
   const pulls = client.closedPulls ? await client.closedPulls(limit).catch(() => []) : [];
   const open = client.openPulls ? await client.openPulls(limit).catch(() => []) : [];
   const seenPrs = new Map();
   for (const pr of [...open, ...pulls]) seenPrs.set(pr.number, pr);
 
-  const maintainerComments = [];
-  const feedback = [];
-
   for (const pr of [...seenPrs.values()].slice(0, limit)) {
     const comments = client.reviewComments
       ? await client.reviewComments(pr.number).catch(() => [])
       : [];
-    for (const c of comments) {
-      const login = c.user?.login?.toLowerCase();
-      const body = c.body ?? '';
-      if (c.user?.type === 'Bot' && (!botLogin || c.user.login === botLogin)) {
-        const fp = body.match(/<!-- centinela-ai-finding fp=([a-f0-9]+) -->/)?.[1];
-        if (!fp) continue;
-        const reactions = client.reactions
-          ? await client.reactions(c.id, true).catch(() => [])
-          : [];
-        const plus = reactions.filter(r => r.content === '+1').length;
-        const minus = reactions.filter(r => r.content === '-1').length;
-        feedback.push({ pr: pr.number, fp, path: c.path, accepted: plus > 0, dismissed: minus > 0 });
-      } else if (
-        (maintainers.has(login) || ['OWNER', 'MEMBER'].includes(c.author_association)) &&
-        body.length >= 35 &&
-        RULE_SIGNAL.test(body)
-      ) {
-        maintainerComments.push({
-          pr: pr.number,
-          path: c.path,
-          body: body.trim().slice(0, 600),
-          repo,
-        });
-      }
-    }
+    for (const c of comments) await inspectComment(c, pr.number);
   }
-  return { maintainerComments, feedback, scannedPrs: Math.min(seenPrs.size, limit) };
+  return {
+    maintainerComments,
+    feedback,
+    scannedPrs: Math.min(seenPrs.size, limit),
+    since: sinceIso,
+    harvestedAt: new Date(now).toISOString(),
+  };
 }
 
 export const DISTILL_SCHEMA = {
@@ -489,6 +541,7 @@ export function planLearningUpdates({
   const shareScope = config.learnings?.shareScope ?? 'public-only';
 
   const nextLocal = structuredClone(parseLearningsDoc(currentLocal));
+  if (signals?.harvestedAt) nextLocal.lastHarvestAt = signals.harvestedAt;
   const localIds = new Set(nextLocal.learnings.map(l => l.id));
   const sharedUpdates = new Map();
   const retirements = [];

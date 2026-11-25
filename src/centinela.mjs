@@ -1104,15 +1104,21 @@ export async function runLearn({ options, openPr = false, env = process.env, mod
   const repoInfo = await client.repository().catch(() => ({ default_branch: 'main', private: false }));
   const baseBranch = repoInfo.default_branch ?? 'main';
   const isPrivate = repoInfo.private === true;
-  const [signals, stack] = await Promise.all([
-    harvestSignals({ client, config, repo, botLogin }),
+  const localPath = config.learnings?.localPath || '.github/centinela/learnings.json';
+  const [localText, stack] = await Promise.all([
+    client.fileAt(localPath, baseBranch).catch(() => null),
     detectStack({ client, ref: baseBranch, setting: config.stack, legacy: config.rules }).catch(
       () => ({ packs: [], paths: [] })
     ),
   ]);
-  const localPath = config.learnings?.localPath || '.github/centinela/learnings.json';
-  const localText = await client.fileAt(localPath, baseBranch).catch(() => null);
   const currentLocal = parseLearningsDoc(localText);
+  const signals = await harvestSignals({
+    client,
+    config,
+    repo,
+    botLogin,
+    since: currentLocal.lastHarvestAt,
+  });
 
   const sharedRef = parseRemoteRef(config.learnings?.shared);
   const activeStacks = learningStacksFor({ packs: stack.packs, paths: stack.paths });

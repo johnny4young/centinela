@@ -22,6 +22,7 @@ import {
   applySuppressions,
   classifyScope,
   distillSignalsWithAi,
+  harvestSignals,
   learningStacksFor,
   loadMultiProjectLearnings,
   planLearningUpdates,
@@ -769,4 +770,41 @@ test('AI distiller generalizes maintainer comments, issues read cited code on ma
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('harvestSignals uses repo-wide since watermark without dropping busy-week PRs', async () => {
+  let receivedSince = null;
+  const client = {
+    repoReviewComments: async since => {
+      receivedSince = since;
+      return Array.from({ length: 22 }, (_, i) => ({
+        id: i + 1,
+        pull_request_url: `https://api.github.com/repos/johnny4young/puntovivo/pulls/${500 + i}`,
+        path: `packages/server/src/db/file${i}.ts`,
+        author_association: 'OWNER',
+        user: { login: 'johnny4young', type: 'User' },
+        body: `Please always validate tenantId before updating row ${i} in the database.`,
+      }));
+    },
+  };
+  const harvested = await harvestSignals({
+    client,
+    config: defaults,
+    repo: 'johnny4young/puntovivo',
+    since: '2026-11-18T00:00:00.000Z',
+    now: Date.parse('2026-11-25T00:00:00.000Z'),
+  });
+  assert.equal(receivedSince, '2026-11-18T00:00:00.000Z');
+  assert.equal(harvested.scannedPrs, 22, 'scans all 22 PRs instead of capping at 15');
+  assert.equal(harvested.maintainerComments.length, 22);
+  assert.equal(harvested.harvestedAt, '2026-11-25T00:00:00.000Z');
+
+  const plan = planLearningUpdates({
+    currentLocal: { version: 1, learnings: [] },
+    signals: harvested,
+    candidates: [],
+    repo: 'johnny4young/puntovivo',
+    config: defaults,
+  });
+  assert.equal(plan.nextLocal.lastHarvestAt, '2026-11-25T00:00:00.000Z');
 });
