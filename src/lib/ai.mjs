@@ -487,14 +487,13 @@ export function aiConfigured(env = process.env) {
 }
 
 /** A Claude client from the official SDK, which handles the federation exchange and refresh. */
-export async function createModel(env = process.env) {
-  if (
-    !env.ANTHROPIC_API_KEY &&
-    !env.ANTHROPIC_IDENTITY_TOKEN &&
-    !env.ANTHROPIC_IDENTITY_TOKEN_FILE
-  ) {
-    const token = await actionsIdentityToken(env);
-    if (token) env.ANTHROPIC_IDENTITY_TOKEN = token;
+export async function createModel(env = process.env, fetchImpl = fetch) {
+  if (!env.ANTHROPIC_API_KEY && !env.ANTHROPIC_IDENTITY_TOKEN_FILE) {
+    // Always mint a fresh OIDC JWT when running in Actions: tokens are single-use on WIF exchange.
+    if (env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+      const token = await actionsIdentityToken(env, fetchImpl);
+      if (token) env.ANTHROPIC_IDENTITY_TOKEN = token;
+    }
   }
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   return new Anthropic({ timeout: 8 * 60_000, maxRetries: 1 });

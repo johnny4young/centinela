@@ -121,6 +121,8 @@ on:
     types: [created]
   pull_request_review_comment:
     types: [created]
+  pull_request_review:
+    types: [submitted]
   schedule:
     - cron: '23 9 * * *'
   workflow_dispatch:

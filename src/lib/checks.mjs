@@ -262,6 +262,8 @@ export function checkSensitive(ctx) {
 }
 
 export function checkIdentity(ctx) {
+  const mode = ctx.config.pullRequest?.verifyMaintainerSignatures ?? 'maintainer';
+  if (mode === 'off') return [];
   const maintainers = new Set(ctx.config.maintainers.map(login => login.toLowerCase()));
   if (maintainers.has(ctx.author.toLowerCase())) return [];
   const results = [];
@@ -279,7 +281,7 @@ export function checkIdentity(ctx) {
       !maintainers.has(signedBy) &&
       trailers.some(trailer => [...maintainers].some(m => trailer.includes(m)));
     if (spoofedAuthor || spoofedTrailer)
-      results.push(finding('impersonation', 'maintainer', { sha: commit.sha.slice(0, 7) }));
+      results.push(finding('impersonation', mode, { sha: commit.sha.slice(0, 7) }));
   }
   return results;
 }

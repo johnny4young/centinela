@@ -21,6 +21,9 @@ jobs:
       contains(github.event.comment.body, '@centinela'))) ||
       (github.event_name == 'pull_request_review_comment' &&
       github.event.comment.user.type != 'Bot') ||
+      (github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'approved' &&
+      github.event.review.user.type != 'Bot') ||
       ((github.event_name == 'pull_request_target' || github.event_name == 'issues') &&
       ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
       contains(fromJSON('["triage", "triage: approved", "bug"]'), github.event.label.name) ||

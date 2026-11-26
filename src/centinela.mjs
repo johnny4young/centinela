@@ -220,6 +220,19 @@ export function parseTarget(argv, env) {
     }
     return { kind: 'lifecycle', dryRun: dispatchDry, force: false, configFile, action: null, ref: null };
   }
+  if (env.GITHUB_EVENT_NAME === 'pull_request_review') {
+    return {
+      kind: 'pr',
+      number: event.pull_request?.number,
+      dryRun,
+      force: false,
+      configFile,
+      ref: env.GITHUB_SHA ?? null,
+      action: event.action ?? null,
+      eventHeadSha: event.pull_request?.head?.sha ?? null,
+      eventLabel: null,
+    };
+  }
   if (env.GITHUB_EVENT_NAME === 'pull_request_review_comment') {
     return {
       kind: 'pr',
@@ -333,6 +346,29 @@ export function approvalFor({
 }
 
 /**
+ * Returns `headSha` when a non-bot maintainer has approved the current head commit via GitHub's
+ * native Pull Request Approve review (and not subsequently requested changes on it).
+ */
+export function nativeReviewApprovalFor({ reviews = [], headSha, config }) {
+  if (!headSha || !reviews.length) return null;
+  const maintainers = new Set((config.maintainers ?? []).map(m => m.toLowerCase()));
+  const latestByReviewer = new Map();
+  for (const r of reviews) {
+    if (r?.user?.type === 'Bot' || r?.commit_id !== headSha) continue;
+    const login = r.user?.login?.toLowerCase();
+    const isMaint =
+      MAINTAINER_ASSOCIATIONS.has(r.author_association) || (login && maintainers.has(login));
+    if (!isMaint) continue;
+    if (r.state === 'APPROVED' || r.state === 'CHANGES_REQUESTED' || r.state === 'DISMISSED') {
+      latestByReviewer.set(login, r.state);
+    }
+  }
+  const states = [...latestByReviewer.values()];
+  if (states.includes('CHANGES_REQUESTED')) return null;
+  return states.includes('APPROVED') ? headSha : null;
+}
+
+/**
  * An approval moves to a new head only when the content is identical (same tree, so a squash
  * or reworded commit) and the review found nothing it had not found when it was approved.
  */
@@ -396,15 +432,17 @@ export async function triagePullRequest({
 
   const existing = ownComment(await client.comments(number), botLogin);
   const previous = parseMarker(existing?.body);
-  let approvedSha = approvalFor({
-    labels,
-    config,
-    headSha: pr.head.sha,
-    previous: previous?.approved ?? null,
-    action,
-    eventHeadSha,
-    eventLabel,
-  });
+  const prReviews = client.reviews ? await client.reviews(number).catch(() => []) : [];
+  let approvedSha =
+    approvalFor({
+      labels,
+      config,
+      headSha: pr.head.sha,
+      previous: previous?.approved ?? null,
+      action,
+      eventHeadSha,
+      eventLabel,
+    }) ?? nativeReviewApprovalFor({ reviews: prReviews, headSha: pr.head.sha, config });
   const labeled = labels.includes(config.overrideLabel);
   // The approved tree is recorded, and compared when the head moved under an approval.
   const carry = labeled && !approvedSha && Boolean(previous?.approved && previous.tree);
@@ -527,15 +565,16 @@ export async function triagePullRequest({
 
   // Verify Centinela's own open review threads against the new head and auto-resolve fixed ones.
   let threadProgress = null;
+  let sharedAiModel = model;
   if (client.reviewThreads) {
     const threads = await client.reviewThreads(number).catch(() => []);
     const { ownOpen, otherOpen } = partitionOpenThreads(threads, botLogin);
     let resolvedNow = [];
     let remainingOwn = ownOpen;
-    if (ownOpen.length && (model || aiConfigured(env))) {
-      const activeModel = model ?? (await createModel(env));
+    if (ownOpen.length && (sharedAiModel || aiConfigured(env))) {
+      sharedAiModel ??= await createModel(env);
       const check = await verifyOpenThreads({
-        model: activeModel,
+        model: sharedAiModel,
         pr,
         threads: ownOpen,
         files,
@@ -629,14 +668,19 @@ export async function triagePullRequest({
   const { labels: names } = config;
   const sizeLabels = Object.keys(names.size).map(label => `size/${label}`);
   const hasCiFailure = findings.some(f => f.id === 'ci-failure');
-  const hasOpenOwnThreads = Boolean(threadProgress?.ownOpen?.length);
+  // Only maintainer-severity open Centinela threads keep waiting-on-author; suggestions never stall a PR.
+  const hasOpenMaintainerThreads = Boolean(
+    threadProgress?.ownOpen?.some(t => t.severity === 'maintainer')
+  );
   const wanted = new Set([`size/${size.label}`]);
-  if (result.blocking || hasOpenOwnThreads) wanted.add(names.waitingOnAuthor.name);
+  if (result.blocking || (!approved && hasOpenMaintainerThreads)) {
+    wanted.add(names.waitingOnAuthor.name);
+  }
   if (result.maintainer) wanted.add(names.needsMaintainer.name);
   if (
     result.state === 'success' &&
     !hasCiFailure &&
-    !hasOpenOwnThreads &&
+    (approved || !hasOpenMaintainerThreads) &&
     names.readyForMaintainer
   ) {
     wanted.add(names.readyForMaintainer.name);
@@ -664,11 +708,12 @@ export async function triagePullRequest({
 
   // Cost-tiered automatic AI review for ready external PRs when credentials are configured.
   const tier = selectReviewTier({ files, sizeLabel: size.label, config });
-  if (tier !== 'off' && !result.blocking && aiConfigured(env)) {
+  if (tier !== 'off' && !result.blocking && (sharedAiModel || aiConfigured(env))) {
     await runAiReview({
       options: { client, config, number, dryRun, force, repo, version, botLogin, log },
       tier,
       env,
+      model: sharedAiModel,
     }).catch(error => log(`auto AI review (${tier}) failed: ${error.message}`));
   }
   return { findings, result };

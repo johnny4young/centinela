@@ -56,6 +56,15 @@ export function resolveConfig(project = {}) {
       throw new Error(`centinela: pullRequest.${key} must be blocking, suggestion or off`);
     }
   }
+  if (
+    !['maintainer', 'suggestion', 'off'].includes(
+      config.pullRequest.verifyMaintainerSignatures ?? 'maintainer'
+    )
+  ) {
+    throw new Error(
+      'centinela: pullRequest.verifyMaintainerSignatures must be maintainer, suggestion or off'
+    );
+  }
   config.rules.custom = (config.rules.custom ?? []).map(validateRule);
   for (const key of ['effort', 'fastEffort']) {
     if (config.ai[key] && !['low', 'medium', 'high', 'xhigh', 'max'].includes(config.ai[key]))

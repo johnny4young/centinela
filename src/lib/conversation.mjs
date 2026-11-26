@@ -149,6 +149,9 @@ export function partitionOpenThreads(threads = [], botLogin = null) {
       path: thread.path ?? '',
       line: thread.line ?? thread.originalLine ?? null,
       isOutdated: thread.isOutdated === true,
+      severity: /\b(For a maintainer|Para un mantenedor)\b/i.test(root?.body ?? '')
+        ? 'maintainer'
+        : 'suggestion',
       rootCommentId: root?.databaseId ?? null,
       url: root?.url ?? null,
       author: root?.author?.login ?? 'reviewer',
@@ -235,7 +238,7 @@ export async function verifyOpenThreads({
   });
 
   const user = [
-    `<pr number="${pr.number}" head="${String(pr.head?.sha ?? '').slice(0, 7)}">\nTitle: ${pr.title}\n</pr>`,
+    `<pr number="${pr.number}" head="${String(pr.head?.sha ?? '').slice(0, 7)}">\nTitle: ${pr.title}\n\n${String(pr.body ?? '').slice(0, 6000)}\n</pr>`,
     ...blocks,
     `Write each reason in ${LANGUAGE[language] ?? LANGUAGE.en}.`,
   ].join('\n\n');

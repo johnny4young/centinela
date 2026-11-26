@@ -13,6 +13,7 @@ import {
 import {
   checkDescription,
   checkEvidence,
+  checkIdentity,
   checkIssue,
   checkLanguage,
   checkSensitive,
@@ -57,6 +58,7 @@ import { applyStack, detectPacks } from '../src/lib/packs.mjs';
 import { scaffoldForRepo, suggestCustomRulesFromMarkdown } from '../src/cli-init.mjs';
 import {
   loadConfig,
+  nativeReviewApprovalFor,
   parseTarget,
   runAiReview,
   runConversation,
@@ -1178,4 +1180,93 @@ test('CI annotations digest, active glossary, extra Swift/Go rules, recent commi
   assert.equal(aiEval.passed, true);
   assert.equal(aiEval.tp, 1);
   assert.equal(aiEval.usage.input, 500);
+});
+
+test('native GitHub Approve unlocks status, verifyOpenThreads reads pr.body, and verifyMaintainerSignatures is configurable', async () => {
+  const cfg = resolveConfig({
+    maintainers: ['johnny4young'],
+    pullRequest: { verifyMaintainerSignatures: 'suggestion' },
+  });
+
+  // Native Approve by maintainer on current head unlocks status; CHANGES_REQUESTED revokes.
+  assert.equal(
+    nativeReviewApprovalFor({
+      headSha: 'sha-1',
+      config: cfg,
+      reviews: [
+        { commit_id: 'sha-1', state: 'APPROVED', author_association: 'OWNER', user: { login: 'johnny4young', type: 'User' } },
+      ],
+    }),
+    'sha-1'
+  );
+  assert.equal(
+    nativeReviewApprovalFor({
+      headSha: 'sha-1',
+      config: cfg,
+      reviews: [
+        { commit_id: 'sha-1', state: 'APPROVED', author_association: 'OWNER', user: { login: 'johnny4young', type: 'User' } },
+        { commit_id: 'sha-1', state: 'CHANGES_REQUESTED', author_association: 'OWNER', user: { login: 'johnny4young', type: 'User' } },
+      ],
+    }),
+    null
+  );
+
+  // partitionOpenThreads detects maintainer vs suggestion severity
+  const { ownOpen } = partitionOpenThreads(
+    [
+      {
+        id: 'T1',
+        isResolved: false,
+        path: 'a.ts',
+        comments: { nodes: [{ body: '**Bug** · For a maintainer\n<!-- centinela-ai-finding fp=1 -->', author: { login: 'centinela-young' } }] },
+      },
+      {
+        id: 'T2',
+        isResolved: false,
+        path: 'b.ts',
+        comments: { nodes: [{ body: '**Tests** · Small nit\n<!-- centinela-ai-finding fp=2 -->', author: { login: 'centinela-young' } }] },
+      },
+    ],
+    'centinela-young[bot]'
+  );
+  assert.equal(ownOpen[0].severity, 'maintainer');
+  assert.equal(ownOpen[1].severity, 'suggestion');
+
+  // verifyOpenThreads sends pr.body so description-based findings can be verified
+  let capturedPrompt = '';
+  await verifyOpenThreads({
+    model: {
+      messages: {
+        create: async req => {
+          capturedPrompt = req.messages[0].content;
+          return { content: [{ type: 'text', text: '{"decisions":[]}' }] };
+        },
+      },
+    },
+    pr: {
+      number: 525,
+      title: 'feat(orders): print',
+      body: 'Updated scope: shared print bridge with quotationPrinter.',
+      head: { sha: '641eb72' },
+    },
+    threads: [ownOpen[0]],
+    files: [],
+    config: cfg,
+  });
+  assert.match(capturedPrompt, /Updated scope: shared print bridge/);
+
+  // verifyMaintainerSignatures supports suggestion and off
+  const idSug = checkIdentity({
+    author: 'Andresdotdev',
+    commits: [{ sha: '641eb72aaa', authorLogin: 'johnny4young', committerLogin: 'johnny4young', verified: false, message: 'fix: nit' }],
+    config: cfg,
+  });
+  assert.equal(idSug[0]?.severity, 'suggestion');
+
+  const idOff = checkIdentity({
+    author: 'Andresdotdev',
+    commits: [{ sha: '641eb72aaa', authorLogin: 'johnny4young', committerLogin: 'johnny4young', verified: false, message: 'fix: nit' }],
+    config: resolveConfig({ maintainers: ['johnny4young'], pullRequest: { verifyMaintainerSignatures: 'off' } }),
+  });
+  assert.equal(idOff.length, 0);
 });

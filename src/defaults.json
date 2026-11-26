@@ -43,6 +43,7 @@
     "conventionalTitle": true,
     "singleLineTitle": "blocking",
     "requireScreenshots": "blocking",
+    "verifyMaintainerSignatures": "maintainer",
     "sections": "template"
   },
   "paths": {
