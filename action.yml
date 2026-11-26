@@ -59,7 +59,7 @@ runs:
       run: echo "version=$(cat "$GITHUB_ACTION_PATH/.nvmrc")" >> "$GITHUB_OUTPUT"
 
     - name: Setup Node.js
-      uses: actions/setup-node@v7
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ steps.node.outputs.version }}
         check-latest: true
@@ -92,7 +92,7 @@ runs:
     - name: Mint Centinela app token
       id: app
       if: ${{ inputs.app-client-id != '' }}
-      uses: actions/create-github-app-token@v3
+      uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
       with:
         client-id: ${{ inputs.app-client-id }}
         private-key: ${{ inputs.app-private-key }}

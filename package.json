@@ -1,6 +1,6 @@
 {
   "name": "centinela",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "private": true,
   "description": "Polite first-pass review of pull requests and issues from outside contributors.",
   "license": "MIT",
