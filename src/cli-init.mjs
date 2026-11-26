@@ -129,6 +129,13 @@ permissions: {}
 
 jobs:
   centinela:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      statuses: write
+      checks: read
+      id-token: write
     uses: johnny4young/centinela/.github/workflows/reusable-centinela.yml@v1
     secrets: inherit
 `;
